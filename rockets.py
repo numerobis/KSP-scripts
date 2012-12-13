@@ -110,8 +110,9 @@ class engine(object):
 
 g_engines = [
     # We have a none engine for fuel-only stages in asparagus staging.
-    # It has non-zero Isp to avoid divide-by-zero.
-    engine("none",        1,    1,    0,         0),
+    # It has non-zero Isp to avoid divide-by-zero.  Make it radial,
+    # so that we can have radial engines above and we needn't add towers.
+    engine("none",        1,    1,    0,         0, radial=True),
 
     # Real engines.  I'm using the vaccum values rather than atmospheric
     # here; that's a TODO.
@@ -250,19 +251,28 @@ class MoarBoosters(Exception): pass
 class stage(object):
     """
     """
-    def __init__(self, deltaV, payload, engineType, nEngines,
-                laterEngines, numTowers, altitude):
+    def __init__(self, deltaV, payload, engineType, nEngines, laterStages,
+                numTowers, altitude):
 
-        # Combine all engines into one meta-engine, including later stages.
-        allEngines = dict(laterEngines)
-        if engineType in allEngines:
-            allEngines[engineType] += nEngines
+        # Calculate the effective Isp including later stages.
+        allEngines = { engineType : nEngines }
+        thrust = engineType.thrust * nEngines
+        if engineType.vectoring:
+            vectoringThrust = engineType.thrust * nEngines
         else:
-            allEngines[engineType] = nEngines
-        thrust = sum( e.thrust * n for (e, n) in allEngines.iteritems() )
-        vectoringThrust = sum(
-            e.thrust * n for (e, n) in allEngines.iteritems() if e.vectoring )
-        Isp = combineIsp(allEngines, altitude)
+            vectoringThrust = 0
+
+        if not laterStages:
+            Isp = engineType.Isp(altitude)
+        else:
+            for s in laterStages:
+                if s.engineType in allEngines:
+                    allEngines[s.engineType] += s.numEngines
+                else:
+                    allEngines[s.engineType] = s.numEngines
+            Isp = combineIsp(allEngines, altitude)
+            thrust += laterStages[-1].thrust
+            vectoringThrust += laterStages[-1].vectoringThrust
 
         # Calculate masses.
         # Engine mass is specified already.  We only count the engines
@@ -270,7 +280,8 @@ class stage(object):
         # We add 0.3 for decouplers, struts, fuel lines.
         # Dry mass is payload, engines, and empty tanks.
         engineMass = engineType.mass * nEngines
-        dryMassNoTanks = payload + engineMass + 0.3 * numTowers
+        decouplerMass = 0.3 * numTowers
+        dryMassNoTanks = payload + engineMass + decouplerMass
 
         # Get the propellant mass, and distribute it over the towers.
         #
@@ -289,7 +300,7 @@ class stage(object):
         dryMass = dryMassNoTanks + tankMass
         fullMass = dryMass + propMass
 
-        # Store everything we computed.
+        # Store a bunch of data (do we really need it all?)
         self.deltaV = deltaV
         self.payload = payload
         self.engineType = engineType
@@ -297,6 +308,7 @@ class stage(object):
         self.numTowers = numTowers
         self.asparagus = bool(laterStages)
         self.engineMass = engineMass
+        self.decouplerMass = decouplerMass
         self.propellantMass = propMass
         self.dryMass = dryMass
         self.fullMass = fullMass
@@ -535,129 +547,42 @@ class burnProfile(object):
         self.burnRequirements = list(reversed(burnRequirements))
         self.maxIsp = list(reversed(ispMax))
 
-class compressedStageList(object):
-    """
-    A smaller representation of a list of stages, just the information
-    partialSolution needs and no more.
-
-    Two tricks:
-    * The list is a linked list, so we only store each stage once,
-      rather than once per partial solution.  Pure savings.
-    * We store only the bare minimum and recompute the other information on the
-      fly.  We trade time for space.
-    """
-    def __init__(self, stage, nextItem):
-        self.nextItem = nextItem
-        if nextItem is None:
-            # This is the payload stage, which has no engines.
-            # Lower stages can read the description here.
-            (profile, payload, symmetry) = stage
-            self.payload = payload
-            self.profile = profile
-            self.symmetry = symmetry
-        else:
-            # Store just the arguments we need in order to recreate the stage.
-            # We need deltaV, payload, engineType, nEngines, laterEngines,
-            # numTowers, altitude.
-            # deltaV and altitude are read off the burn profile.
-            # laterEngines and payload can be recreated from the nextItem and
-            # the final payload, though for that we need to know if this is an
-            # asparagus stage or not.
-            # That leaves: engineType, nEngines, numTowers, asparagus.
-            # Convert the engine type to its index, and pack the asparagus bit
-            # into it.  Now we're down to three small positive integers.
-            # We could recreate numTowers, but that's more complicated, and
-            # probably not worth avoiding.
-            engineIndex = g_engines.index(stage.engineType)
-
-            data = (engineIndex, stage.numEngines, stage.numTowers)
-            engineIndex = engineIndex * 2 + stage.asparagus
-            dataMax = max(data)
-            if dataMax < 256:
-                typecode = 'B'
-            elif dataMax < (1<<16) - 1:
-                typecode = 'H'
-            else:
-                typecode = 'L'
-            self.data = array(typecode, data)
-
-    def _uncompress(self, profile, burnIndex, payload, laterEngines):
-        """
-        Internal function to uncompress, given that we uncompressed later
-        stages already.  Invalid to call on the top stage.
-        """
-        assert self.nextItem is not None
-
-        deltaV = profile.deltaV[burnIndex]
-        altitude = profile.altitude[burnIndex]
-
-        (engineIndex, numEngines, numTowers) = self.data
-        asparagus = engineIndex % 2
-        engineIndex //= 2
-        engineType = g_engines[engineIndex]
-
-        return stage(deltaV, payload, engineType, numEngines,
-                    laterEngines, numTowers, altitude)
-
-    def uncompress(self):
-        """
-        Uncompress into a list of stages.
-        """
-        # Walk through the compressed stages, which are bottom stage first
-        # rather than the usual top stage first.
-        current = self
-        cstages = [ current ]
-        while current.nextItem:
-            current = current.nextItem
-            cstages.append(current)
-        cstages = list(reversed(cstages))
-
-        # Read the burn profile and initial payload from the top stage.
-        profile = cstages[0].profile
-        payload = cstages[0].payload
-
-        stages = []
-        laterEngines = dict()
-        for (i, cstage) in enumerate(cstages):
-            # Uncompress, update the payload, add in the engines
-            s = cstage._uncompress(profile, i, payload, laterEngines)
-            stages.append(s)
-            payload = s.fullMass
-            if not s.asparagus:
-                laterEngines = { s.engineType : s.numEngines }
-            else:
-                if s.engineType in laterEngines:
-                    laterEngines[s.engineType] += s.numEngines
-                else:
-                    laterEngines[s.engineType] = s.numEngines
-
-        # Now we have the stages in order from top to bottom.
-        return stages
-
-
 class partialSolution(object):
     """
     Set up a partial solution with the given upper stages already
     selected.  Keep track of the required symmetry.
     If this is the first stage, set the payload.
     """
-    def __init__(self, stage, cstages, profile, payload, isComplete):
-        self.cstages = compressedStageList(stage, cstages)
-        # Compute a lower bound on the required mass.
-        if isComplete:
-            # We don't need any more mass than we've got.
-            self.bestMass = payload
+    def __init__(self, profile, stages, symmetry, payload = None):
+        self.profile  = profile
+        self.stages   = stages
+        self.symmetry = symmetry
+        self.complete = (len(stages) == len(profile.deltaV))
+        self.currentMass = stages[-1].fullMass if stages else payload
+        if self.complete:
+            self.bestMass = self.currentMass
         else:
-            # For each remaining stage, compute the best possible mass assuming
-            # a weightless engine of the best type for the altitude at that
-            # stage.
+            # Compute a lower bound on the required mass.
+            # For each stage, compute the best possible mass assuming a
+            # weightless engine of the best type for the altitude at that
+            # stage.  Taking account of altitude makes a huge difference for
+            # lower stages, not much for upper stages.
+            #
+            # Also take account of decoupler mass (and other such per-stage
+            # overhead).  This makes a modest difference to all stages,
+            # particularly for smaller spacecraft.  Minor nuisance: we don't
+            # know how much to charge for the top stage, but there are O(1) top
+            # stages, so it doesn't matter much.
+            #
             # Improving this heuristic can drastically improve the search time.
-            bestMass = payload
+            bestMass = self.currentMass
+            decouplers = stages[-1].decouplerMass if stages else 0
             for i in xrange(len(stages), len(profile.deltaV)):
                 (bestProp, bestTank) = burnMass(profile.deltaV[i],
                         profile.maxIsp[i], bestMass)
                 bestMass += bestProp
                 bestMass += bestTank
+                bestMass += decouplers
             self.bestMass = bestMass
 
     def __lt__(self, other):
@@ -667,47 +592,44 @@ class partialSolution(object):
 
     def extend(self):
         """
-        Return a list of options to add the next stage down on this
-        rocket.
-        Return also whether the options are complete.
+        Return a set of options to add the next stage down on this
+        rocket.  The options are sorted by mass.
         """
-        # Uncompress the stages.
-        (stages, profile, payload, symmetry) = self.cstages.uncompress()
-
+        assert not self.complete
         # i is the next burn to do
-        i = len(stages)
-        assert i < len(profile.deltaV)
-        optionsAsparagus = designStage(symmetry,
-            profile.deltaV[i],
-            currentMass,
-            profile.altitude[i],
-            burnRequirement = profile.burnRequirements[i],
-            laterStages = stages)
-        optionsStraight = designStage(symmetry,
-            profile.deltaV[i],
-            currentMass,
-            profile.altitude[i],
-            burnRequirement = profile.burnRequirements[i],
+        i = len(self.stages)
+        assert i < len(self.profile.deltaV)
+        optionsAsparagus = designStage(self.symmetry,
+            self.profile.deltaV[i],
+            self.currentMass,
+            self.profile.altitude[i],
+            burnRequirement = self.profile.burnRequirements[i],
+            laterStages = self.stages)
+        optionsStraight = designStage(self.symmetry,
+            self.profile.deltaV[i],
+            self.currentMass,
+            self.profile.altitude[i],
+            burnRequirement = self.profile.burnRequirements[i],
             laterStages = [])
         options = optionsAsparagus
         options.extend(optionsStraight)
+        list.sort(options, key = lambda x: x.fullMass)
         solutions = []
-        isComplete = i == len(profile.deltaV) - 1
         for stage in options:
-            partial = partialSolution(stage, self.cstages,
-                        profile, stage.fullMass, isComplete)
+            nextstages = list(self.stages)
+            nextstages.append(stage)
+            partial = partialSolution(self.profile, nextstages, self.symmetry)
             solutions.append(partial)
-        return (solutions, isComplete)
+        return solutions
 
     def __str__(self):
-        (stages, profile, payload, symmetry) = self.cstages.uncompress()
         return "\n".join( "\t" + str(s) for s in reversed(self.stages) )
 
 
 def designRocket(payload, burnProfiles, massToBeat = None):
     # Initialize the heap of partial solutions.
     partials = [
-        partialSolution(None, (burnProfile, symmetry, payload))
+        partialSolution(burnProfile, [], symmetry, payload)
             for symmetry in (2, 3) for burnProfile in burnProfiles
     ]
     heapq.heapify(partials)
@@ -797,7 +719,7 @@ def designRocket(payload, burnProfiles, massToBeat = None):
 
 # One-way trip to Jool with a lander, but with a jet boost to 10km
 payload = 20
-startAltitude = 10000
+startAltitude = 0
 #    mass 181.94 T, 2 x 13 24-77 and 12 T fuel, 19.92s burn at 3580 kN (19.68 m/s^2), asparagus
 #    mass 152 T, 2 x 1 LV-T30 and 9 T fuel, 19.60s burn at 3060 kN (20.13 m/s^2), asparagus
 #    mass 128.65 T, 2 x 1 LV-T30 and 7 T fuel, 19.43s burn at 2630 kN (20.44 m/s^2), asparagus
@@ -849,7 +771,7 @@ for n in range(1,10):
 
 # Design the rocket!
 
-soln = designRocket(payload, profiles, massToBeat=311.35)
+soln = designRocket(payload, profiles)
 if soln:
     print ("Best solution:")
     for x in soln:
