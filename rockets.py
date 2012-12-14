@@ -4,6 +4,7 @@ import math
 from numbers import Number
 import heapq
 from LinkedList import LinkedList
+from array import array
 
 # Following pretty much an optimal climb slope to a 100km orbit at Kerbin,
 # here's a correspondence between deltaV and altitude.  I haven't figured
@@ -303,6 +304,9 @@ class stage(object):
         fullMass = dryMass + propMass
 
         # Store a bunch of data (do we really need it all?)
+        # Many of the fields are packed into a python array of floats,
+        # which we have to create first.
+        self._data = array('f', range(len(self._attrindices)))
         self.deltaV = deltaV
         self.payload = payload
         self.engineType = engineType
@@ -318,6 +322,26 @@ class stage(object):
         self.burnTime = burnTime(deltaV, Isp, thrust, dryMass)
         self.thrust = thrust
         self.vectoringThrust = vectoringThrust
+
+    _attrindices = dict( (name, i) for (i, name) in enumerate([
+        'deltaV', 'payload', 'numEngines', 'numTowers', 'asparagus',
+        'engineMass', 'decouplerMass', 'propellantMass', 'dryMass', 
+        'fullMass', 'Isp', 'burnTime', 'thrust', 'vectoringThrust'
+    ]))
+
+    def __getattr__(self, attr):
+        indices = self._attrindices
+        if attr in indices:
+            return self._data[indices[attr]]
+        else:
+            raise AttributeError
+
+    def __setattr__(self, attr, value):
+        indices = self._attrindices
+        if attr in indices:
+            self._data[indices[attr]] = value
+        else:
+            object.__setattr__(self, attr, value)
 
     def __str__(self):
         return (
@@ -683,7 +707,7 @@ def designRocket(payload, burnProfiles, massToBeat = None):
             heapq.heappush(partials, x)
 
     if bestKnown:
-        return list(reversed(bestKnown.stages))
+        return bestKnown.stages
     else:
         return None
 
