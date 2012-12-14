@@ -3,10 +3,11 @@ from __future__ import division # / means float div always
 import math
 from numbers import Number
 import heapq
+from LinkedList import LinkedList
 
-# Following pretty much an optimal climb slope to a 100km orbit, here's a
-# correspondence between deltaV and altitude.  I haven't figured out how to
-# calculate this correctly.
+# Following pretty much an optimal climb slope to a 100km orbit at Kerbin,
+# here's a correspondence between deltaV and altitude.  I haven't figured
+# out how to calculate this correctly for other planets... TODO
 climbSlope = [
     # deltaV, altitude
     (287, 923),
@@ -200,7 +201,7 @@ def burnMass(deltaV, Isp, m0):
     # state: this corresponds to needing infinite fuel.
     a = alpha(deltaV, Isp)
     beta = 8 # TODO: handle the smaller, less efficient tanks too!
-    if 1 - a + beta <= 0: raise WeakEngineException
+    if 1 - a + beta <= 0: raise WeakEngineException(Isp)
     tankMass = m0 * (a - 1) / (1 - a + beta)
     propMass = tankMass * beta
     return (propMass, tankMass)
@@ -245,7 +246,8 @@ def combineIsp(engines, altitude):
 
 ##############################
 #
-class WeakEngineException(Exception): pass
+class WeakEngineException(Exception):
+    def __init__(self, Isp): self.Isp = Isp
 class MoarBoosters(Exception): pass
 
 class stage(object):
@@ -271,8 +273,8 @@ class stage(object):
                 else:
                     allEngines[s.engineType] = s.numEngines
             Isp = combineIsp(allEngines, altitude)
-            thrust += laterStages[-1].thrust
-            vectoringThrust += laterStages[-1].vectoringThrust
+            thrust += laterStages.head.thrust
+            vectoringThrust += laterStages.head.vectoringThrust
 
         # Calculate masses.
         # Engine mass is specified already.  We only count the engines
@@ -319,8 +321,9 @@ class stage(object):
 
     def __str__(self):
         return (
-        "mass %g T, %d x %d %s and %g T fuel, %.2fs burn at %g kN (%.2f m/s^2)%s"
+        "mass %g T,%s %d x %d %s and %g T fuel, %.2fs burn at %g kN (%.2f m/s^2), Isp %d"
         %   (self.fullMass,
+             " asparagus" if self.asparagus else "",
              self.numTowers,
              self.numEngines / self.numTowers,
              self.engineType.name,
@@ -328,7 +331,8 @@ class stage(object):
              self.burnTime,
              self.thrust,
              self.thrust / self.fullMass,
-             ", asparagus" if self.asparagus else ""))
+             self.Isp)
+        )
 
 class burnRequirement(object):
     """
@@ -393,13 +397,17 @@ def evalStage(symmetry, deltaV, payload, engineType, altitude,
     # Count up how many engines we might be able to use.
     # TODO: I'm not allowing making a tower with side towers.  That limits
     # a lot of things (particularly large loads).
+    # TODO: I'm not allowing mixing engine types.  In particular, you could
+    # have a stage with both standard and radial engines; or if you have
+    # more than one tower, you could use a bicoupler or tricoupler with 2
+    # types of engines.
     if engineType.large:
         # We can only fit one engine on each tower.
         numEngines = [ numTowers ]
         extraMass = [ 0 ]
     elif engineType.radial:
         # If we have one tower, we need to maintain symmetry.
-        # Otherwise, we can use 1 to 16.
+        # Otherwise, we can use 1 to 16 per tower.
         if numTowers == 1:
             maxEngines = int(math.ceil(16/symmetry))
             numEngines = [ x * symmetry for x in range(1, maxEngines + 1) ]
@@ -420,12 +428,13 @@ def evalStage(symmetry, deltaV, payload, engineType, altitude,
         try:
             s = stage(deltaV, payload + xmass, engineType, n, laterStages,
                       numTowers, altitude)
-        except WeakEngineException:
-            # Our Isp is too low to get anywhere.  If we have later
-            # stages, may it's their fault and we just need to add more
-            # of this kind of engine.
-            if laterStages: continue
-            else: return None
+        except WeakEngineException, e:
+            # Our Isp is too low to get anywhere.  Check if adding more
+            # engines will improve the Isp.
+            if e.Isp < engineType.Isp(altitude):
+                continue # Adding more may help.
+            else:
+                return None # Adding more will get us nowhere.
 
         if s.vectoringThrust < 0.25 * s.thrust:
             if engineType.vectoring: continue
@@ -558,7 +567,7 @@ class partialSolution(object):
         self.stages   = stages
         self.symmetry = symmetry
         self.complete = (len(stages) == len(profile.deltaV))
-        self.currentMass = stages[-1].fullMass if stages else payload
+        self.currentMass = stages.head.fullMass if stages else payload
         if self.complete:
             self.bestMass = self.currentMass
         else:
@@ -576,7 +585,7 @@ class partialSolution(object):
             #
             # Improving this heuristic can drastically improve the search time.
             bestMass = self.currentMass
-            decouplers = stages[-1].decouplerMass if stages else 0
+            decouplers = stages.head.decouplerMass if stages else 0
             for i in xrange(len(stages), len(profile.deltaV)):
                 (bestProp, bestTank) = burnMass(profile.deltaV[i],
                         profile.maxIsp[i], bestMass)
@@ -610,26 +619,25 @@ class partialSolution(object):
             self.currentMass,
             self.profile.altitude[i],
             burnRequirement = self.profile.burnRequirements[i],
-            laterStages = [])
+            laterStages = LinkedList.nil)
         options = optionsAsparagus
         options.extend(optionsStraight)
         list.sort(options, key = lambda x: x.fullMass)
         solutions = []
         for stage in options:
-            nextstages = list(self.stages)
-            nextstages.append(stage)
+            nextstages = LinkedList.cons(stage, self.stages)
             partial = partialSolution(self.profile, nextstages, self.symmetry)
             solutions.append(partial)
         return solutions
 
     def __str__(self):
-        return "\n".join( "\t" + str(s) for s in reversed(self.stages) )
+        return "\n".join( "\t" + str(s) for s in self.stages )
 
 
 def designRocket(payload, burnProfiles, massToBeat = None):
     # Initialize the heap of partial solutions.
     partials = [
-        partialSolution(burnProfile, [], symmetry, payload)
+        partialSolution(burnProfile, LinkedList.nil, symmetry, payload)
             for symmetry in (2, 3) for burnProfile in burnProfiles
     ]
     heapq.heapify(partials)
@@ -702,24 +710,22 @@ def designRocket(payload, burnProfiles, massToBeat = None):
 # terminate.
 
 # One-way trip to Jool with a lander:
-#payload = 20
-#startAltitude = 0
-# Note: the following isn't necessarily optimal, I hit swap after 322k
-# candidates.
-#        mass 311.1 T, 2 x 3 LV-T30 and 21 T fuel, 20.71s burn at 6390 kN (20.54 m/s^2), asparagus
-#        mass 255.45 T, 2 x 2 LV-T30 and 16 T fuel, 21.43s burn at 5100 kN (19.96 m/s^2), asparagus
-#        mass 213.65 T, 2 x 1 LV-T45 and 13 T fuel, 21.56s burn at 4240 kN (19.85 m/s^2), asparagus
-#        mass 180.8 T, 2 x 2 LV-T30 and 11 T fuel, 20.10s burn at 3840 kN (21.24 m/s^2), asparagus
-#        mass 150.25 T, 2 x 1 LV-T30 and 9 T fuel, 21.53s burn at 2980 kN (19.83 m/s^2), asparagus
-#        mass 126.9 T, 2 x 1 Aerospike and 7 T fuel, 21.46s burn at 2550 kN (20.09 m/s^2), asparagus
-#        mass 107.55 T, 2 x 3 LV-T45 and 6 T fuel, 21.04s burn at 2200 kN (20.46 m/s^2), asparagus
+payload = 20
+startAltitude = 0
+massToBeat = 310.35
+# Note: the following isn't necessarily optimal, I stopped when I hit swap.
+#        mass 310.35 T, 2 x 3 LV-T30 and 25 T fuel, 24.75s burn at 6120 kN (19.72 m/s^2), asparagus
+#        mass 245.7 T, 2 x 2 LV-T30 and 18 T fuel, 25.08s burn at 4830 kN (19.66 m/s^2), asparagus
+#        mass 199.4 T, 2 x 2 Mark 55 and 14 T fuel, 24.82s burn at 3970 kN (19.91 m/s^2), asparagus
+#        mass 163.7 T, 2 x 2 LV-T30 and 11 T fuel, 23.25s burn at 3490 kN (21.32 m/s^2), asparagus
+#        mass 133.15 T, 2 x 1 LV-T30 and 9 T fuel, 25.02s burn at 2630 kN (19.75 m/s^2), asparagus
+#        mass 109.8 T, 2 x 3 LV-T45 and 7 T fuel, 24.85s burn at 2200 kN (20.04 m/s^2), asparagus
 #        mass 84.15 T, 2 x 2 Aerospike and 12 T fuel, 107.00s burn at 1000 kN (11.88 m/s^2), asparagus
 #        mass 50.35 T, 2 x 2 LV-N and 6 T fuel, 277.26s burn at 300 kN (5.96 m/s^2), asparagus
 #        mass 27.05 T, 1 x 1 LV-N and 4 T fuel, 409.72s burn at 60 kN (2.22 m/s^2)
+#
 
 # One-way trip to Jool with a lander, but with a jet boost to 10km
-payload = 20
-startAltitude = 0
 #    mass 181.94 T, 2 x 13 24-77 and 12 T fuel, 19.92s burn at 3580 kN (19.68 m/s^2), asparagus
 #    mass 152 T, 2 x 1 LV-T30 and 9 T fuel, 19.60s burn at 3060 kN (20.13 m/s^2), asparagus
 #    mass 128.65 T, 2 x 1 LV-T30 and 7 T fuel, 19.43s burn at 2630 kN (20.44 m/s^2), asparagus
@@ -771,7 +777,7 @@ for n in range(1,10):
 
 # Design the rocket!
 
-soln = designRocket(payload, profiles)
+soln = designRocket(payload, profiles, massToBeat = massToBeat)
 if soln:
     print ("Best solution:")
     for x in soln:
