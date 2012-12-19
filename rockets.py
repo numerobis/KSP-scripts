@@ -4,7 +4,6 @@ import math
 from numbers import Number
 import heapq
 from LinkedList import LinkedList
-from array import array
 
 ## TODO 1: ditch best-first and switch to branch-and-bound, or at least to a beam
 ## search (with a beam per profile)
@@ -427,9 +426,6 @@ class stage(object):
         fullMass = dryMass + propMass
 
         # Store a bunch of data (do we really need it all?)
-        # Many of the fields are packed into a python array of floats,
-        # which we have to create first.
-        self._data = array('f', range(len(self._attrindices)))
         self.targetDeltaV = deltaV
         self.payload = payload
         self.engineType = engineType
@@ -446,31 +442,11 @@ class stage(object):
         self.thrust = thrust
         self.vectoringThrust = vectoringThrust
 
-    _attrindices = dict( (name, i) for (i, name) in enumerate([
-        'deltaV', 'payload', 'numEngines', 'numTowers', 'asparagus',
-        'engineMass', 'decouplerMass', 'propellantMass', 'dryMass',
-        'fullMass', 'Isp', 'burnTime', 'thrust', 'vectoringThrust'
-    ]))
-
     def achievedDeltaV(self):
         return self.Isp * g0 * math.log(self.fullMass / self.dryMass)
 
     def acceleration(self):
         return self.thrust / self.fullMass
-
-    def __getattr__(self, attr):
-        indices = self._attrindices
-        if attr in indices:
-            return self._data[indices[attr]]
-        else:
-            raise AttributeError
-
-    def __setattr__(self, attr, value):
-        indices = self._attrindices
-        if attr in indices:
-            self._data[indices[attr]] = value
-        else:
-            object.__setattr__(self, attr, value)
 
     def collectEngines(self, dict):
         if self.engineType in dict:
@@ -921,143 +897,112 @@ class partialSolution(object):
 
 def designRocket(profiles, massToBeat = None,
         analyst = None, symmetries = 2):
-    # Initialize the set of partial solutions.  But don't heapify yet...
     if isinstance(symmetries, Number):
         symmetries = (symmetries,)
-
-    # Store all the profiles.  Should the analyst ever repeat a recommendation,
-    # ignore it: it's already in the queue.
-    profileSet = set(profiles)
 
     # Should we prune?  If the best known is an actual solution, we want pursue
     # a candidate if it might reduce the mass by at least 1%.  Less reduction,
     # we don't really care.
-    def shouldKeep(candidate, bestKnown):
+    bestKnown = massToBeat
+    def shouldKeep(candidate):
         if isinstance(bestKnown, partialSolution):
             if candidate.bestMass <= improvementRatio * bestKnown.bestMass:
                 return True
         else:
             return candidate < bestKnown
 
-    # Until the heap is empty, pop off the cheapest partial solution
-    # (including the heuristic) and complete it greedily.  In so doing,
-    # prune out partial solutions that are too expensive, and stop
-    # completing if we get too expensive.
-    # Note: there's no pruning until there is a known solution.
-    def processCandidate(candidate, oldBest, nconsidered):
-        nconsidered += 1
-        if nconsidered % 500 == 0:
-            print ("Considered %d candidates so far, %d remaining" %
-                    (nconsidered, len(partials)))
+    # How many candidates have we evaluated?  In a list so generateSolutions
+    # can write to it.
+    ncandidatesConsidered = [ 0 ]
 
-        # Complete it greedily, keeping track of all the other branches
-        # we could have taken.  Assumes that extend() will return the
-        # possibilities sorted lightest first.  Stop when we discover this
-        # candidate is not the best.  Return the candidate if it's an
-        # improvement, and regardless, return the branches not taken.
-        # Note: we'll prune early if we can prove the candidate improves by
-        # less than 1%, but if our heuristic is loose and we complete a
-        # candidate and discover the candidate saves only a gram, we will still
-        # report it.
-        otherBranches = []
-        while shouldKeep(candidate, oldBest) and not candidate.complete:
-            nextStage = candidate.extend()
-            if not nextStage: break
-            candidate = nextStage[0]
-            otherBranches.extend(nextStage[1:])
-        if candidate < oldBest and candidate.complete:
-            # (note: less-than is less strict than shouldKeep)
-            return (candidate, otherBranches, nconsidered)
+    def generateSolutions(candidate):
+        """
+        Return a generator over all the complete and partial expansions of the
+        candidate, pruning if the candidate isn't better than the best known
+        solution.  Print a progress message as a side effect every 1000 nodes we
+        expand.
+        """
+        ncandidatesConsidered[0] += 1
+        if ncandidatesConsidered[0] % 1000 == 0:
+            print ("%d choices considered" % ncandidatesConsidered[0])
+        if not shouldKeep(candidate):
+            return
+
+        # Generate all the children of this solution, i.e. all the
+        # possibilities of adding an engine to the present solution.
+        nextStageCandidates = candidate.extend()
+
+        # There might not be any children (i.e. no engine can handle the next stage)
+        if not nextStageCandidates:
+            return
+
+        if nextStageCandidates[0].complete:
+            # Base case: return the completed solutions in order, pruning ones
+            # we know aren't better than the best.  Note: we only need to
+            # consider the first proposed solution -- they're sorted by mass already,
+            # so either the first is an improvement or none of them is.
+            yield nextStageCandidates[0]
         else:
-            return (None, otherBranches, nconsidered)
-
-    def locallyImprove(bestKnown, nconsidered):
-        analysis = analyst.analyze(bestKnown.stages)
-        analyst.prettyPrint(bestKnown.stages, analysis)
-
-        # Given the solution, suggest avenues for improvement,
-        # and follow them immediately.  But only once!
-        profiles = analyst.suggest(bestKnown.stages, analysis)
-        otherBranches = []
-
-        improved = False # have we improved on the candidate?
-        for profile in profiles:
-            if profile in profileSet: continue
-            profileSet.add(profile)
-            for symmetry in symmetries:
-                candidate = partialSolution(profile, LinkedList.nil, symmetry)
-                (newBest, others, nconsidered) = processCandidate(candidate, bestKnown, nconsidered)
-                if newBest:
-                    bestKnown = newBest
-                    improved = True
-                otherBranches.extend(others)
-
-        if improved:
-            return (bestKnown, otherBranches, nconsidered)
-        else:
-            return (None, otherBranches, nconsidered)
-
-
-    bestKnown = massToBeat # Note: always compare < bestKnown.
-    nconsidered = 0
+            # This is the general case: if the next stage is not bottom-most,
+            # iterate over the children and generate their children in turn.
+            for child in nextStageCandidates:
+                yield child # so we can decide whether to stop looking at this branch and go to another
+                for x in generateSolutions(child):
+                    yield x
 
     try:
-        # First, a pass that expands all the initial proposed stagings.
-        # We store them into partials, which is going to become the heap.
-        partials = []
-        for profile in profiles:
-            for symmetry in symmetries:
-                candidate = partialSolution(profile, LinkedList.nil, symmetry)
+        # For each profile, create a partial solution, and create a generator over the
+        # solutions in that search tree.  Put them into a heap.
+        class searchTree(object):
+            def __init__(self, candidate, generator):
+                self.candidate = candidate
+                self.generator = generator
+            def __lt__(self, other):
+                return self.candidate < other.candidate
+        def makeTrees(profiles):
+            candidates = [ partialSolution(profile, LinkedList.nil, symmetry)
+                for profile in profiles for symmetry in symmetries ]
 
-            # Copied from below...
-            (newBest, otherBranches, nconsidered) = processCandidate(candidate, bestKnown, nconsidered)
-            partials.extend(otherBranches)
-            if newBest:
-                bestKnown = newBest
-                if not analyst:
-                    print ("Improved solution: %s" % bestKnown)
-                else:
-                    # Use the new best as a template to try for a local improvement.
-                    # Keep iterating until we've thoroughly explored this part of solution space,
-                    # and the greedy solution didn't improve.
-                    while newBest:
-                        (newBest, otherB, nconsidered) = locallyImprove(bestKnown, nconsidered)
-                        partials.extend(otherB)
-                        if newBest: bestKnown = newBest
+            trees = [ searchTree(candidate, generateSolutions(candidate))
+                        for candidate in candidates ]
+            return trees
 
-        # Now ditch the expensive ones lest we keep them forever (until the end), and heapify.
-        partials = filter(lambda x: shouldKeep(x, bestKnown), partials)
-        heapq.heapify(partials)
+        trees = makeTrees(profiles)
+        heapq.heapify(trees)
+        while(len(trees)):
+            # pop off the most promising search tree
+            tree = heapq.heappop(trees)
 
-        # Finally, the main best-first search loop.
-        while len(partials) > 0:
-            # Pop off the best-looking candidate.
-            candidate = heapq.heappop(partials)
-            (newBest, otherBranches, nconsidered) = processCandidate(candidate, bestKnown, nconsidered)
+            # try to push it a bit further (might not work: we might prune everything,
+            # or the last one we got might have been the last solution to search)
+            try:
+                candidate = tree.generator.next()
 
-            # If this is a better solution, update the best.
-            if newBest:
-                bestKnown = newBest
-                if not analyst:
-                    print ("Improved solution: %s" % bestKnown)
-                else:
-                    # Use the new best as a template to try for a local improvement.
-                    # Keep iterating until we've thoroughly explored this part of solution space,
-                    # and the greedy solution didn't improve.
-                    while newBest:
-                        (newBest, otherB, nconsidered) = locallyImprove(bestKnown, nconsidered)
-                        otherBranches.extend(otherB)
-                        if newBest: bestKnown = newBest
+                # It worked, so update the search tree and push it back on the queue
+                tree = searchTree(candidate, tree.generator)
+                heapq.heappush(trees, tree)
 
+                # Check if we improved the best known solution
+                if candidate.complete and candidate < bestKnown:
+                    bestKnown = candidate
+                    if not analyst:
+                        print ("Improved solution: %s" % bestKnown)
+                    else:
+                        analysis = analyst.analyze(bestKnown.stages)
+                        analyst.prettyPrint(bestKnown.stages, analysis)
 
-            # Add all the branches we didn't explore, filtering out the ones that
-            # are too heavy.
-            otherBranches = filter(lambda x: shouldKeep(x, bestKnown), otherBranches)
-            for x in otherBranches:
-                heapq.heappush(partials, x)
-        print ("Completed search after %d evaluations" % nconsidered)
+                        # See if we have any good ideas for potentially improved stagings.
+                        # Optimality is violated right here: we only suggest for solutions
+                        # that are better than any prior.
+                        profiles = analyst.suggest(bestKnown.stages, analysis)
+                        newtrees = makeTrees(profiles)
+                        for tree in newtrees:
+                            heapq.heappush(trees, tree)
+            except StopIteration:
+                pass
+        print ("Completed search after %d evaluations" % (ncandidatesConsidered[0],))
     except KeyboardInterrupt:
-        print ("Cancelled search after %d evaluations" % nconsidered)
+        print ("Cancelled search after %d evaluations" % (ncandidatesConsidered[0],))
 
     if isinstance(bestKnown, partialSolution):
         return bestKnown.stages
