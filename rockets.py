@@ -6,6 +6,9 @@ import heapq
 from LinkedList import LinkedList
 from array import array
 
+## TODO 1: ditch best-first and switch to branch-and-bound, or at least to a beam
+## search (with a beam per profile)
+
 ###########################################################################
 ## Set these parameters, then run the script (a poor man's argument
 ## processing).
@@ -48,6 +51,15 @@ symmetry = 2
 # this much deltaV.  Smaller values give better rockets but longer
 # optimization time.
 minStageDeltaV = 750
+
+# The search will ignore solutions that can only improve the current best by 1%
+# or less (i.e. the mass of a new solution must be less than 0.99 times the old
+# solution or else we don't really care).  You can change that; set to 1 to
+# find the strict optimum given how the search works (which isn't actually
+# optimal).  Set lower to allow a progressively less optimal solution, but
+# search faster.
+improvementRatio = 0.99
+
 
 
 ###########################################################################
@@ -895,7 +907,7 @@ class partialSolution(object):
             laterStages = LinkedList.nil)
         options = optionsAsparagus
         options.extend(optionsStraight)
-        list.sort(options, key = lambda x: x.fullMass)
+        list.sort(options, key = lambda x: x.fullMass) # critical!
         solutions = []
         for stage in options:
             nextstages = LinkedList.cons(stage, self.stages)
@@ -917,6 +929,16 @@ def designRocket(profiles, massToBeat = None,
     # ignore it: it's already in the queue.
     profileSet = set(profiles)
 
+    # Should we prune?  If the best known is an actual solution, we want pursue
+    # a candidate if it might reduce the mass by at least 1%.  Less reduction,
+    # we don't really care.
+    def shouldKeep(candidate, bestKnown):
+        if isinstance(bestKnown, partialSolution):
+            if candidate.bestMass <= improvementRatio * bestKnown.bestMass:
+                return True
+        else:
+            return candidate < bestKnown
+
     # Until the heap is empty, pop off the cheapest partial solution
     # (including the heuristic) and complete it greedily.  In so doing,
     # prune out partial solutions that are too expensive, and stop
@@ -933,13 +955,18 @@ def designRocket(profiles, massToBeat = None,
         # possibilities sorted lightest first.  Stop when we discover this
         # candidate is not the best.  Return the candidate if it's an
         # improvement, and regardless, return the branches not taken.
+        # Note: we'll prune early if we can prove the candidate improves by
+        # less than 1%, but if our heuristic is loose and we complete a
+        # candidate and discover the candidate saves only a gram, we will still
+        # report it.
         otherBranches = []
-        while candidate < oldBest and not candidate.complete:
+        while shouldKeep(candidate, oldBest) and not candidate.complete:
             nextStage = candidate.extend()
             if not nextStage: break
             candidate = nextStage[0]
             otherBranches.extend(nextStage[1:])
-        if candidate < oldBest: # which only happens if it's complete
+        if candidate < oldBest and candidate.complete:
+            # (note: less-than is less strict than shouldKeep)
             return (candidate, otherBranches, nconsidered)
         else:
             return (None, otherBranches, nconsidered)
@@ -974,61 +1001,63 @@ def designRocket(profiles, massToBeat = None,
     bestKnown = massToBeat # Note: always compare < bestKnown.
     nconsidered = 0
 
-    # First, a pass that expands all the initial proposed stagings.
-    # We store them into partials, which is going to become the heap.
-    partials = []
-    for profile in profiles:
-        for symmetry in symmetries:
-            candidate = partialSolution(profile, LinkedList.nil, symmetry)
+    try:
+        # First, a pass that expands all the initial proposed stagings.
+        # We store them into partials, which is going to become the heap.
+        partials = []
+        for profile in profiles:
+            for symmetry in symmetries:
+                candidate = partialSolution(profile, LinkedList.nil, symmetry)
 
-        # Copied from below...
-        (newBest, otherBranches, nconsidered) = processCandidate(candidate, bestKnown, nconsidered)
-        partials.extend(otherBranches)
-        if newBest:
-            bestKnown = newBest
-            if not analyst:
-                print ("Improved solution: %s" % bestKnown)
-            else:
-                # Use the new best as a template to try for a local improvement.
-                # Keep iterating until we've thoroughly explored this part of solution space,
-                # and the greedy solution didn't improve.
-                while newBest:
-                    (newBest, otherB, nconsidered) = locallyImprove(bestKnown, nconsidered)
-                    partials.extend(otherB)
-                    if newBest: bestKnown = newBest
+            # Copied from below...
+            (newBest, otherBranches, nconsidered) = processCandidate(candidate, bestKnown, nconsidered)
+            partials.extend(otherBranches)
+            if newBest:
+                bestKnown = newBest
+                if not analyst:
+                    print ("Improved solution: %s" % bestKnown)
+                else:
+                    # Use the new best as a template to try for a local improvement.
+                    # Keep iterating until we've thoroughly explored this part of solution space,
+                    # and the greedy solution didn't improve.
+                    while newBest:
+                        (newBest, otherB, nconsidered) = locallyImprove(bestKnown, nconsidered)
+                        partials.extend(otherB)
+                        if newBest: bestKnown = newBest
 
-    # Now ditch the expensive ones lest we keep them forever (until the end), and heapify.
-    partials = filter(lambda x: x < bestKnown, partials)
-    heapq.heapify(partials)
+        # Now ditch the expensive ones lest we keep them forever (until the end), and heapify.
+        partials = filter(lambda x: shouldKeep(x, bestKnown), partials)
+        heapq.heapify(partials)
 
-    # Finally, the main best-first search loop.
-    while len(partials) > 0:
-        # Pop off the best-looking candidate.
-        candidate = heapq.heappop(partials)
-        (newBest, otherBranches, nconsidered) = processCandidate(candidate, bestKnown, nconsidered)
+        # Finally, the main best-first search loop.
+        while len(partials) > 0:
+            # Pop off the best-looking candidate.
+            candidate = heapq.heappop(partials)
+            (newBest, otherBranches, nconsidered) = processCandidate(candidate, bestKnown, nconsidered)
 
-        # If this is a better solution, update the best.
-        if newBest:
-            bestKnown = newBest
-            if not analyst:
-                print ("Improved solution: %s" % bestKnown)
-            else:
-                # Use the new best as a template to try for a local improvement.
-                # Keep iterating until we've thoroughly explored this part of solution space,
-                # and the greedy solution didn't improve.
-                while newBest:
-                    (newBest, otherB, nconsidered) = locallyImprove(bestKnown, nconsidered)
-                    otherBranches.extend(otherB)
-                    if newBest: bestKnown = newBest
+            # If this is a better solution, update the best.
+            if newBest:
+                bestKnown = newBest
+                if not analyst:
+                    print ("Improved solution: %s" % bestKnown)
+                else:
+                    # Use the new best as a template to try for a local improvement.
+                    # Keep iterating until we've thoroughly explored this part of solution space,
+                    # and the greedy solution didn't improve.
+                    while newBest:
+                        (newBest, otherB, nconsidered) = locallyImprove(bestKnown, nconsidered)
+                        otherBranches.extend(otherB)
+                        if newBest: bestKnown = newBest
 
 
-        # Add all the branches we didn't explore, filtering out the ones that
-        # are too heavy.
-        otherBranches = filter(lambda x: x < bestKnown, otherBranches)
-        for x in otherBranches:
-            heapq.heappush(partials, x)
-
-    print ("Completed search after %d evaluations" % nconsidered)
+            # Add all the branches we didn't explore, filtering out the ones that
+            # are too heavy.
+            otherBranches = filter(lambda x: shouldKeep(x, bestKnown), otherBranches)
+            for x in otherBranches:
+                heapq.heappush(partials, x)
+        print ("Completed search after %d evaluations" % nconsidered)
+    except KeyboardInterrupt:
+        print ("Cancelled search after %d evaluations" % nconsidered)
 
     if isinstance(bestKnown, partialSolution):
         return bestKnown.stages
