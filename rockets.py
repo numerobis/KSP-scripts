@@ -629,8 +629,8 @@ def suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload, engineType, a
             extraMass = [ 0 ]
         elif engineType.radial:
             # We can fit up to 8 Mark-55s, or 16 24-77s.
-            # But I don't *want* to fit that many 24-77s, so set the max at 8.
-            maxRadials = 8
+            # But the part count gets ridiculous fast, so keep it much lower.
+            maxRadials = 4
 
             if numTowers == 1:
                 # If we have one tower, we need to maintain symmetry.
@@ -680,14 +680,18 @@ def suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload, engineType, a
         # of towers.
         return None
 
-    # For each choice of number of towers, try that number of towers.  Return
-    # only the first one we find.  We are thereby dropping some possibilities,
-    # but otherwise the branching factor is just too ridiculous.
+    # For each choice of number of towers, try that number of towers.
+    # That's too ridiculous for radials, so instead, return just the first
+    # number of radials that works.
+    choices = []
     for n in numTowerChoices:
         s = tryNumTowers(n)
-        if s is not None:
+        if s is None: continue
+        if engineType.radial:
             return [s]
-    return []
+        else:
+            choices.append(s)
+    return choices
 
 
 def designStage(symmetry, numBaseTowers, deltaV, payload, altitude,
@@ -842,6 +846,14 @@ class partialSolution(object):
                     decouplers, numTowers, allEngines, bestMass, i)
             self.bestMass = bestMass
 
+    def remainingStages(self):
+        if self.complete:
+            # Locally-improved solutions have no profile, so the general
+            # code would fail.
+            return 0
+        else:
+            return len(self.profile.deltaV) - len(self.stages)
+
     def _lowerBound(self, decouplers, numTowers, allEngines, mass, i):
         """
         Lower bound the mass we'll need at stage i (where 0 is the top
@@ -984,97 +996,130 @@ def designRocket(profiles, massToBeat = None,
         else:
             return candidate < bestKnown
 
-    def generateSolutions(candidate):
+    def greedySolution(partial):
         """
-        Return a generator over all the complete and partial expansions of the
-        candidate, pruning if the candidate isn't better than the best known
-        solution.
+        Greedily extend the partial solution to completion.
+        Return None if the greedy solution got pruned, or no solution exists.
+        """
+        while not partial.complete:
+            if not shouldKeep(partial): return
+            children = partial.extend()
+            if not children: return
+            partial = children[0]
+        return partial
+
+    def semiGreedySolutions(candidate, depth):
+        """
+        Returns a generator that allows iterating over greedy completions of
+        all possibilities of engine choice for the top 'depth' stages.
+        Depth 0 is purely greedy, whereas in an n-stage rocket depth n is
+        completely optimal for the burn profile.
+        This is support for implementing an iterative deepening search.
+
+        The concept is that engine choice in low stages matters less to the
+        overall mass than does engine mass in upper stages: e.g. it takes about
+        30T to lift 1T to LKO.  Example: Using an engine one tonne too heavy
+        when leaving LKO will thus cost us 30T, whereas an equally wrong engine
+        at the first stage costs us 1T.  Depth-first does an exhaustive search
+        for the best low-stage engine for a fixed upper-stage engine, which is
+        precisely wrong.  Breadth-first with greedy extension does an
+        exhaustive search of upper-stage engines and doesn't worry much about
+        the low-stage engines.
         """
         if not shouldKeep(candidate):
+            yield None
             return
 
-        # Generate all the children of this solution, i.e. all the
-        # possibilities of adding an engine to the present solution.
-        nextStageCandidates = candidate.extend()
-
-        # There might not be any children (i.e. no engine can handle the next stage)
-        if not nextStageCandidates:
-            return
-
-        if nextStageCandidates[0].complete:
-            # Base case: return the first proposed solution -- they're sorted
-            # by mass already, so either the first is an improvement or none of
-            # them is.
-            yield nextStageCandidates[0]
+        if depth == 0:
+            yield greedySolution(candidate)
         else:
-            # This is the general case: if the next stage is not bottom-most,
-            # iterate over the children and generate their children in turn.
-            for child in nextStageCandidates:
-                # Recur first, then yield the child.
-                # It's important to yield the child: otherwise, the iteration
-                # blocks until we find a better solution.  This way, we can let
-                # the caller stop searching in this tree.
-                for x in generateSolutions(child):
+            for child in candidate.extend():
+                for x in semiGreedySolutions(child, depth - 1):
                     yield x
-                yield child
+
+    def generateSolutions(candidate):
+        """
+        Create a generator that allows iterating in over all the
+        completions of the candidate.
+
+        Yields None periodically if the search is being unfruitful, to allow
+        trying other search trees in parallel.
+
+        The search order is iterative deepening: all depth-0 solutions, then
+        all depth-1 solutions, ...
+        """
+        # TODO: The algorithm repeats solutions: at depth 1, the first greedy
+        # solution is exactly the depth 0 greedy solution.  At depth 2, the
+        # first is again the depth 0 greedy solution, but also for each child
+        # of the candidate, the first greedy solution is also the corresponding
+        # depth-1 greedy solution.  So the first greedy solution of a leaf is
+        # repeated up to n times on an n-stage rocket -- though pruning can
+        # reduce that.  Might be nice to fix.
+
+        # Note: If we have 1 stage remaining, the greedy solution is optimal,
+        # so the upper bound on the range is correct.
+        for depth in xrange(candidate.remainingStages()):
+            for soln in semiGreedySolutions(candidate, depth):
+                yield soln
+
+    def makeRoots(profiles):
+        candidates = [ partialSolution(profile, nil, symmetry, numBase)
+            for profile in profiles
+            for (symmetry, numBase) in zip(symmetries, numBaseTowers) ]
+
+        roots = [ generateSolutions(candidate) for candidate in candidates ]
+        return roots
+
+    def process(generator):
+        """
+        Move this generator along by one iterate, and return a pair
+        (newBest, finished, profiles) where:
+        * newBest is usually None, but otherwise is a new solution better
+            than the best known
+        * finished is usually False, otherwise True if the generator
+            reached its last iterate.
+        * profiles is a new list of profiles to try that might bring improvement
+        """
+        # try to push it a bit further (might not work: we might prune everything,
+        # or the last one we got might have been the last solution to search)
+        try:
+            candidate = generator.next()
+        except StopIteration:
+            return (None, True, [])
+
+        # Check if we improved the best known solution
+        assert (not candidate) or (candidate.complete)
+        if (not candidate) or (not (candidate < bestKnown)):
+            return (None, False, [])
+
+        # Improvement!
+        newBest = candidate
+        if not analyst:
+            print ("Improved solution: %s" % newBest)
+            return (newBest, False, [])
+        else:
+            # See if we have any good ideas for potentially improved stagings.
+            # Optimality is violated right here: we only suggest for solutions
+            # that are better than any prior.  That means we might miss a non-
+            # optimal solution could have been locally improved to
+            # the global optimum.
+            analysis = analyst.analyze(newBest.stages)
+            (improvement, profiles) = analyst.suggest(newBest.stages, analysis)
+            profiles = list(profiles)
+
+            # Do only one round of improvement; assumption is the analyst
+            # already looped.
+            if improvement and improvement.head.fullMass < newBest.currentMass:
+                asPartial = partialSolution(None, LinkedList(improvement))
+                assert (asPartial < newBest)
+                newBest = asPartial
+                analysis = analyst.analyze(newBest.stages)
+
+            analyst.prettyPrint(newBest.stages, analysis)
+            return (newBest, False, profiles)
+
 
     try:
-        def makeRoots(profiles):
-            candidates = [ partialSolution(profile, nil, symmetry, numBase)
-                for profile in profiles
-                for (symmetry, numBase) in zip(symmetries, numBaseTowers) ]
-
-            roots = [ generateSolutions(candidate) for candidate in candidates ]
-            return roots
-
-        def process(generator):
-            """
-            Move this generator along by one iterate, and return a pair
-            (newBest, finished, profiles) where:
-            * newBest is usually None, but otherwise is a new solution better
-                than the best known
-            * finished is usually False, otherwise True if the generator
-                reached its last iterate.
-            * profiles is a new list of profiles to try that might bring improvement
-            """
-            # try to push it a bit further (might not work: we might prune everything,
-            # or the last one we got might have been the last solution to search)
-            try:
-                candidate = generator.next()
-            except StopIteration:
-                return (None, True, [])
-
-            # Check if we improved the best known solution
-            if (not candidate.complete) or (not (candidate < bestKnown)):
-                return (None, False, [])
-
-            # Improvement!
-            newBest = candidate
-            if not analyst:
-                print ("Improved solution: %s" % newBest)
-                return (newBest, False, [])
-            else:
-                # See if we have any good ideas for potentially improved stagings.
-                # Optimality is violated right here: we only suggest for solutions
-                # that are better than any prior.  That means we might miss a non-
-                # optimal solution could have been locally improved to
-                # the global optimum.
-                analysis = analyst.analyze(newBest.stages)
-                (improvement, profiles) = analyst.suggest(newBest.stages, analysis)
-                profiles = list(profiles)
-
-                # Do only one round of improvement; assumption is the analyst
-                # already looped.
-                if improvement and improvement.head.fullMass < newBest.currentMass:
-                    asPartial = partialSolution(None, LinkedList(improvement))
-                    assert (asPartial < newBest)
-                    newBest = asPartial
-                    analysis = analyst.analyze(newBest.stages)
-
-                analyst.prettyPrint(newBest.stages, analysis)
-                return (newBest, False, profiles)
-
-
         roots = makeRoots(profiles)
         nexpansions = 0
         nexpansionsLastPrinted = 0
