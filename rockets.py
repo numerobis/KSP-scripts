@@ -3,10 +3,7 @@ from __future__ import division # / means float div always
 import math
 from numbers import Number
 import heapq
-from LinkedList import LinkedList
-
-## TODO 1: ditch best-first and switch to branch-and-bound, or at least to a beam
-## search (with a beam per profile)
+from LinkedList import LinkedList, cons, nil
 
 ###########################################################################
 ## Set these parameters, then run the script (a poor man's argument
@@ -34,17 +31,47 @@ class burn(object):
         self.name = name
         self.payload = payload
 
-burns = [
+munreturnburns = [
     burn(842, 1, "TMI"),
     burn(1000, 3, "mun land", payload = 0.5), # lander legs, ladder, etc
     burn(1000, 3, "mun depart"),
     burn(842, 1, "TKI", payload = 4.5) # capsule, 2 parachutes, RTG
 ]
 
+# This is for a return from Laythe starting from Laythe orbit.
+#startAltitude = None
+#burns = [
+#    burn(1500, 7.85*2, "Laythe liftoff"),
+#    burn(1000, 1, "Laythe escape"),
+#    burn(1200, 1, "Trans-Kerbin"),
+#    burn(250, 1, "Kerbin reentry", payload = 12.63)
+#]
+# Answer: about 46 tonnes.
+
+startAltitude = 0
+laythereturnburns = [
+    burn(1915, 1, "Trans-Jool"),
+    # Payload here is left on Laythe: 4x hab modules, legs, chutes, instruments.
+    burn(1500, 1, "Laythe intersect and land", 14.75),
+    burn(2500, 7.85*2, "Laythe liftoff"),
+    burn(1000, 1, "Laythe escape"),
+    burn(1200, 1, "Trans-Kerbin"),
+    # Payload here is what we return to Kerbin with: capsule, 2x modules,
+    # panels, legs, chutes, instruments, ...
+    burn(250, 1, "Kerbin reentry", payload = 10.25)
+]
+burns = munreturnburns
+
 # We must specify the kind of symmetry we want our spacecraft to have.
 # 2 is almost always optimal, but it may end up with a spacecraft that is too
 # fat to be built in the VAB.  This can be a list; we'll try them all.
 symmetry = 2
+
+# Do the engines come below the final payload, or must they be side-mounted?
+# 1 means to put the engines below; if side-mounted, specify how many sides.
+# It's perfectly valid to have payload, 2 side-mounted engines, and thenceforth
+# 4-fold symmetry, etc.
+numBaseTowers = 2
 
 # The automatic stage splitter will try splitting stages that achieve more than
 # this much deltaV.  Smaller values give better rockets but longer
@@ -210,25 +237,28 @@ class engine(object):
     def __str__(self):
         return self.name
 
+# We have a none engine for fuel-only stages in asparagus staging.  It has no
+# mass, no thrust, Isp doesn't matter.  Make it radial, so that we can have
+# radial engines above and we needn't add towers.
+g_noEngine = engine("none", 0, 0, 0, 0, radial=True)
+
 g_engines = [
-    # We have a none engine for fuel-only stages in asparagus staging.
-    # It has non-zero Isp to avoid divide-by-zero.  Make it radial,
-    # so that we can have radial engines above and we needn't add towers.
-    engine("none",        1,    1,    0,         0, radial=True),
+    # One of the choices of engines is to have none...
+    g_noEngine,
 
     # Jets.  TODO
 
-    # Bipropellant engines.
-    engine("24-77",     250, 300,    0.09,     20, vectoring=True, radial=True),
-    engine("Aerospike", 388, 390,    1.5,     175),
-    engine("LV-1",      220, 290,    0.03,      1.5),
-    engine("LV-909",    300, 390,    0.5,      50, vectoring=True),
+    # Bipropellant engines, in order of Isp first, and thrust:mass ratio second
     engine("LV-N",      220, 800,    2.25,     60, vectoring=True),
+    engine("Aerospike", 388, 390,    1.5,     175),
+    engine("LV-909",    300, 390,    0.5,      50, vectoring=True),
+    engine("Poodle",    270, 390,    2.5,     220, vectoring=True, large=True),
     engine("LV-T30",    320, 370,    1.25,    215),
     engine("LV-T45",    320, 370,    1.5,     200, vectoring=True),
     engine("Mainsail",  280, 330,    6,      1500, vectoring=True, large=True),
     engine("Mark 55",   290, 320,    0.9,     120, vectoring=True, radial=True),
-    engine("Poodle",    270, 390,    2.5,     220, vectoring=True, large=True),
+    engine("24-77",     250, 300,    0.09,     20, vectoring=True, radial=True),
+    engine("LV-1",      220, 290,    0.03,      1.5),
 
     # The ion engine is a bit off: we need a *lot* of power for it,
     # which starts to add more mass than just the 0.25.  Also, the
@@ -284,6 +314,11 @@ def lightestEngineForThrust(thrust):
 beta = 8 # ratio of propellant mass : dry mass in the big stock tanks.
 
 def alpha(deltaV, Isp):
+    # Corner cases: if deltaV is 0, alpha is 1: m1 = m0 obviously.
+    # If Isp is 0, alpha is undefined; raise an exception
+    if deltaV == 0: return 1
+    if Isp == 0: raise WeakEngineException(Isp)
+
     return math.exp(deltaV / (Isp * g0))
 
 def propellantMass(deltaV, Isp, m0):
@@ -326,11 +361,18 @@ def burnTime(deltaV, Isp, thrust, m0):
     Return the time needed to perform the burn.
     m0 is the dry mass including tanks.
     """
+    # If there's no deltaV, or no mass, we don't burn at all.
+    if deltaV == 0 or m0 == 0: return 0
+
+    # If there's no thrust but we want to move, problem...
+    if Isp == 0 or thrust == 0:
+        raise WeakEngineException(Isp)
+
     # The mass flow rate of an engine is thrust / (Isp * g0)
     # The mass we expel is from the ideal rocket equation.
-    m1 = propellantMass(deltaV, Isp, m0)
-    rate = thrust / (Isp * g0)
-    return m1 / rate
+    # The amount of time we burn is thus mprop / (thrust/(Isp*g0))
+    mprop = propellantMass(deltaV, Isp, m0)
+    return mprop * Isp * g0 / thrust
 
 def minThrustForBurnTime(deltaV, Isp, m0, time):
     """
@@ -350,12 +392,15 @@ def combineIsp(engines, altitude):
     based off the relative mass flow rate of the engines.
     """
     # the mass flow rate of an engine is thrust / (Isp * g0)
+    # (unless there's no thrust, then it's 0 even if Isp is 0).
     # so the mass is sum(num_i * thrust_i / (Isp_i * g0))
     # the relative mass of engine type j is
     #   [num_j*thrust_j / (Isp_j*g0)] / sum(...)
     # and we cancel out the g0.
     def numerator(engcount):
         (engine, count) = engcount
+        totalThrust = engine.thrust * count
+        if totalThrust == 0: return 0
         return count * engine.thrust / engine.Isp(altitude)
     flows = [ numerator(x) for x in engines.iteritems() ]
     total = sum(flows)
@@ -381,7 +426,7 @@ class stage(object):
     """
     """
     def __init__(self, deltaV, payload, engineType, nEngines, laterStages,
-                numTowers, altitude):
+                numTowers, altitude, propMassOverride = None):
 
         # Calculate the effective Isp including later stages.
         allEngines = { engineType : nEngines }
@@ -394,7 +439,7 @@ class stage(object):
         if not laterStages:
             Isp = engineType.Isp(altitude)
         else:
-            for s in laterStages: s.collectEngines(allEngines)
+            self.collectUsableEngines(laterStages, allEngines)
             Isp = combineIsp(allEngines, altitude)
             thrust += laterStages.head.thrust
             vectoringThrust += laterStages.head.vectoringThrust
@@ -411,7 +456,10 @@ class stage(object):
         # Get the propellant mass, and distribute it over the towers.
         #
         # TODO: handle SRBs.
-        (propMass, tankMass) = burnMass(deltaV, Isp, dryMassNoTanks)
+        if propMassOverride:
+            (propMass, tankMass) = propMassOverride
+        else:
+            (propMass, tankMass) = burnMass(deltaV, Isp, dryMassNoTanks)
 
         # Round up to fit an integer number of tanks on each tower.
         #
@@ -435,12 +483,14 @@ class stage(object):
         self.engineMass = engineMass
         self.decouplerMass = decouplerMass
         self.propellantMass = propMass
+        self.tankMass = tankMass
         self.dryMass = dryMass
         self.fullMass = fullMass
         self.Isp = Isp
         self.burnTime = burnTime(deltaV, Isp, thrust, dryMass)
         self.thrust = thrust
         self.vectoringThrust = vectoringThrust
+        self.altitude = altitude
 
     def achievedDeltaV(self):
         return self.Isp * g0 * math.log(self.fullMass / self.dryMass)
@@ -453,6 +503,19 @@ class stage(object):
             dict[self.engineType] += self.numEngines
         else:
             dict[self.engineType] = self.numEngines
+
+    @staticmethod
+    def collectUsableEngines(stages, engineDict = None):
+        """
+        Collect all the engines usable in the remaining stages,
+        listed from bottom to top.
+        """
+        if engineDict is None:
+            engineDict = dict()
+        for s in stages:
+            s.collectEngines(engineDict)
+            if not s.asparagus: break
+        return engineDict
 
     # decoupler mass is assumed to be constant, no matter the circumstances, at
     # a mass of 0.05 (per tower that needs a decoupler)
@@ -512,7 +575,7 @@ class burnRequirement(object):
             return ("min %g m/s^2, max %gs burn"
                         % (self.acceleration, self.burnTime))
 
-def suggestEngineNumbers(symmetry, deltaV, payload, engineType, altitude,
+def suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload, engineType, altitude,
               burnRequirement = None, laterStages = []):
     """
     Given an engine type, a maximum burn time,
@@ -537,14 +600,15 @@ def suggestEngineNumbers(symmetry, deltaV, payload, engineType, altitude,
 
     # How many towers do we have?
     # If we only have no engines, or only radial engines above, we can fit
-    # on one tower.  Otherwise we have a number of towers according to
-    # symmetry.  Then, we can add any number of towers according to symmetry.
-    # I'm allowing up to 3 more steps.
-    numBaseTowers = 1
-    for s in laterStages:
-        if not s.engineType.radial:
+    # on the base number of towers.  Otherwise we have a number of towers
+    # according to symmetry, attached to the side of the previous stage.  Then,
+    # further we can add any number of towers to this stage, according to
+    # symmetry.  I'm allowing up to 2 more steps.
+    for e in stage.collectUsableEngines(laterStages).iterkeys():
+        if not e.radial:
             numBaseTowers = symmetry
-    numTowerChoices = [ numBaseTowers + symmetry * i for i in range(4) ]
+            break
+    numTowerChoices = [ numBaseTowers + symmetry * i for i in range(3) ]
 
     def tryNumTowers(numTowers):
         """
@@ -626,7 +690,7 @@ def suggestEngineNumbers(symmetry, deltaV, payload, engineType, altitude,
     return []
 
 
-def designStage(symmetry, deltaV, payload, altitude,
+def designStage(symmetry, numBaseTowers, deltaV, payload, altitude,
                 laterStages = [],
                 burnRequirement = None):
     """
@@ -650,7 +714,7 @@ def designStage(symmetry, deltaV, payload, altitude,
     choices = []
     for engine in g_engines:
         choices.extend(
-            suggestEngineNumbers(symmetry, deltaV, payload,
+            suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload,
                     engine, altitude, burnRequirement, laterStages)
         )
     return choices
@@ -753,22 +817,24 @@ class partialSolution(object):
     selected.  Keep track of the required symmetry.
     If this is the first stage, set the payload.
     """
-    def __init__(self, profile, stages, symmetry):
+    def __init__(self, profile, stages, symmetry = None, numBaseTowers = None):
         self.profile  = profile
         self.stages   = stages
         self.symmetry = symmetry
-        self.complete = (len(stages) == len(profile.deltaV))
+        self.numBaseTowers = numBaseTowers
+        self.complete = profile is None or (len(stages) == len(profile.deltaV))
+        if symmetry is None or numBaseTowers is None:
+            assert self.complete
+            assert stages
+
         self.currentMass = stages.head.fullMass if stages else 0
         if self.complete:
             self.bestMass = self.currentMass
         else:
             bestMass = self.currentMass
             decouplers = stage._decouplerConstant
-            numTowers = stages.head.numTowers if stages else 1
-            allEngines = dict()
-            for s in stages:
-                s.collectEngines(allEngines)
-                if not s.asparagus: break
+            numTowers = stages.head.numTowers if stages else numBaseTowers
+            allEngines = stage.collectUsableEngines(stages)
 
             # For all lower stages, lower-bound the mass they will need.
             for i in xrange(len(stages), len(profile.deltaV)):
@@ -869,25 +935,25 @@ class partialSolution(object):
         # i is the next burn to do
         i = len(self.stages)
         assert i < len(self.profile.deltaV)
-        optionsAsparagus = designStage(self.symmetry,
+        options = designStage(self.symmetry, self.numBaseTowers,
             self.profile.deltaV[i],
             self.currentMass + self.profile.payload[i],
             self.profile.altitude[i],
             burnRequirement = self.profile.burnRequirements[i],
-            laterStages = self.stages)
-        optionsStraight = designStage(self.symmetry,
+            laterStages = self.stages) # asparagus staging
+        options.extend( designStage(self.symmetry, self.numBaseTowers,
             self.profile.deltaV[i],
             self.currentMass + self.profile.payload[i],
             self.profile.altitude[i],
             burnRequirement = self.profile.burnRequirements[i],
-            laterStages = LinkedList.nil)
-        options = optionsAsparagus
-        options.extend(optionsStraight)
+            laterStages = nil) # standard staging
+        )
         list.sort(options, key = lambda x: x.fullMass) # critical!
         solutions = []
         for stage in options:
-            nextstages = LinkedList.cons(stage, self.stages)
-            partial = partialSolution(self.profile, nextstages, self.symmetry)
+            nextstages = cons(stage, self.stages)
+            partial = partialSolution(self.profile, nextstages,
+                        self.symmetry, self.numBaseTowers)
             solutions.append(partial)
         return solutions
 
@@ -896,14 +962,21 @@ class partialSolution(object):
 
 
 def designRocket(profiles, massToBeat = None,
-        analyst = None, symmetries = 2):
-    if isinstance(symmetries, Number):
-        symmetries = (symmetries,)
+        analyst = None, symmetries = 2, numBaseTowers = 1):
+    if isinstance(symmetries, Number): symmetries = (symmetries,)
+    if isinstance(numBaseTowers, Number): numBaseTowers = (numBaseTowers,)
+    assert len(symmetries) == len(numBaseTowers)
+
+    # bestKnown is None, a number in tonnes, or the best actual solution we've found
+    bestKnown = massToBeat
+
+    # trees is roughly speaking the list of profiles we're still pursuing
+    trees = [ ]
 
     # Should we prune?  If the best known is an actual solution, we want pursue
     # a candidate if it might reduce the mass by at least 1%.  Less reduction,
     # we don't really care.
-    bestKnown = massToBeat
+
     def shouldKeep(candidate):
         if isinstance(bestKnown, partialSolution):
             if candidate.bestMass <= improvementRatio * bestKnown.bestMass:
@@ -911,20 +984,12 @@ def designRocket(profiles, massToBeat = None,
         else:
             return candidate < bestKnown
 
-    # How many candidates have we evaluated?  In a list so generateSolutions
-    # can write to it.
-    ncandidatesConsidered = [ 0 ]
-
     def generateSolutions(candidate):
         """
         Return a generator over all the complete and partial expansions of the
         candidate, pruning if the candidate isn't better than the best known
-        solution.  Print a progress message as a side effect every 1000 nodes we
-        expand.
+        solution.
         """
-        ncandidatesConsidered[0] += 1
-        if ncandidatesConsidered[0] % 1000 == 0:
-            print ("%d choices considered" % ncandidatesConsidered[0])
         if not shouldKeep(candidate):
             return
 
@@ -937,72 +1002,124 @@ def designRocket(profiles, massToBeat = None,
             return
 
         if nextStageCandidates[0].complete:
-            # Base case: return the completed solutions in order, pruning ones
-            # we know aren't better than the best.  Note: we only need to
-            # consider the first proposed solution -- they're sorted by mass already,
-            # so either the first is an improvement or none of them is.
+            # Base case: return the first proposed solution -- they're sorted
+            # by mass already, so either the first is an improvement or none of
+            # them is.
             yield nextStageCandidates[0]
         else:
             # This is the general case: if the next stage is not bottom-most,
             # iterate over the children and generate their children in turn.
             for child in nextStageCandidates:
-                yield child # so we can decide whether to stop looking at this branch and go to another
+                # Recur first, then yield the child.
+                # It's important to yield the child: otherwise, the iteration
+                # blocks until we find a better solution.  This way, we can let
+                # the caller stop searching in this tree.
                 for x in generateSolutions(child):
                     yield x
+                yield child
 
     try:
-        # For each profile, create a partial solution, and create a generator over the
-        # solutions in that search tree.  Put them into a heap.
-        class searchTree(object):
-            def __init__(self, candidate, generator):
-                self.candidate = candidate
-                self.generator = generator
-            def __lt__(self, other):
-                return self.candidate < other.candidate
-        def makeTrees(profiles):
-            candidates = [ partialSolution(profile, LinkedList.nil, symmetry)
-                for profile in profiles for symmetry in symmetries ]
+        def makeRoots(profiles):
+            candidates = [ partialSolution(profile, nil, symmetry, numBase)
+                for profile in profiles
+                for (symmetry, numBase) in zip(symmetries, numBaseTowers) ]
 
-            trees = [ searchTree(candidate, generateSolutions(candidate))
-                        for candidate in candidates ]
-            return trees
+            roots = [ generateSolutions(candidate) for candidate in candidates ]
+            return roots
 
-        trees = makeTrees(profiles)
-        heapq.heapify(trees)
-        while(len(trees)):
-            # pop off the most promising search tree
-            tree = heapq.heappop(trees)
-
+        def process(generator):
+            """
+            Move this generator along by one iterate, and return a pair
+            (newBest, finished, profiles) where:
+            * newBest is usually None, but otherwise is a new solution better
+                than the best known
+            * finished is usually False, otherwise True if the generator
+                reached its last iterate.
+            * profiles is a new list of profiles to try that might bring improvement
+            """
             # try to push it a bit further (might not work: we might prune everything,
             # or the last one we got might have been the last solution to search)
             try:
-                candidate = tree.generator.next()
-
-                # It worked, so update the search tree and push it back on the queue
-                tree = searchTree(candidate, tree.generator)
-                heapq.heappush(trees, tree)
-
-                # Check if we improved the best known solution
-                if candidate.complete and candidate < bestKnown:
-                    bestKnown = candidate
-                    if not analyst:
-                        print ("Improved solution: %s" % bestKnown)
-                    else:
-                        analysis = analyst.analyze(bestKnown.stages)
-                        analyst.prettyPrint(bestKnown.stages, analysis)
-
-                        # See if we have any good ideas for potentially improved stagings.
-                        # Optimality is violated right here: we only suggest for solutions
-                        # that are better than any prior.
-                        profiles = analyst.suggest(bestKnown.stages, analysis)
-                        newtrees = makeTrees(profiles)
-                        for tree in newtrees:
-                            heapq.heappush(trees, tree)
+                candidate = generator.next()
             except StopIteration:
-                pass
-        print ("Completed search after %d evaluations" % (ncandidatesConsidered[0],))
+                return (None, True, [])
+
+            # Check if we improved the best known solution
+            if (not candidate.complete) or (not (candidate < bestKnown)):
+                return (None, False, [])
+
+            # Improvement!
+            newBest = candidate
+            if not analyst:
+                print ("Improved solution: %s" % newBest)
+                return (newBest, False, [])
+            else:
+                # See if we have any good ideas for potentially improved stagings.
+                # Optimality is violated right here: we only suggest for solutions
+                # that are better than any prior.  That means we might miss a non-
+                # optimal solution could have been locally improved to
+                # the global optimum.
+                analysis = analyst.analyze(newBest.stages)
+                (improvement, profiles) = analyst.suggest(newBest.stages, analysis)
+                profiles = list(profiles)
+
+                while improvement:
+                    asPartial = partialSolution(None, LinkedList(improvement))
+                    assert (asPartial < newBest)
+                    newBest = asPartial
+                    analysis = analyst.analyze(newBest.stages)
+                    (improvement, subprofiles) = analyst.suggest(newBest.stages, analysis)
+                    profiles.extend(subprofiles)
+
+                analyst.prettyPrint(newBest.stages, analysis)
+                return (newBest, False, profiles)
+
+
+        roots = makeRoots(profiles)
+        nexpansions = 0
+        nexpansionsLastPrinted = 0
+        while(len(roots)):
+            # Make a pass over all the roots, expanding them one step further.
+            # Any suggested new profiles will be appended, and therefore
+            # processed later in the loop.
+            # Don't iterate; use the indices, so it's understandable what is
+            # going on as we change the roots during the loop.
+            j = 0
+            n = len(roots)
+            for i in xrange(len(roots)):
+                (newBest, done, newprofiles) = process(roots[i])
+                roots.extend(makeRoots(newprofiles))
+                nexpansions += 1
+                if newBest:
+                    bestKnown = newBest
+                if not done:
+                    # We keep this one by copying it to the last unused
+                    # location (which is, usually, i)
+                    roots[j] = roots[i]
+                    j += 1
+                # If we added this profile this round, pick at it a bunch more:
+                # once per root we had before starting.  Otherwise it takes
+                # forever and a day to do any searching around that new
+                # part of the solution space.
+                if i > n:
+                    for _ in xrange(n):
+                        (newBest, done, newprofiles) = process(roots[i])
+                        roots.extend(makeRoots(newprofiles))
+                        nexpansions += 1
+                        if newBest:
+                            bestKnown = newBest
+                        if done: break
+            del roots[j:]
+
+            # let the user know things are moving along
+            if nexpansions >= nexpansionsLastPrinted + 1000:
+                nexpansionsLastPrinted = nexpansions
+                print ("%d choices considered, %d avenues remain"
+                        % (nexpansions, len(roots)) )
+
+        print ("Completed search after %d evaluations" % nexpansions)
     except KeyboardInterrupt:
-        print ("Cancelled search after %d evaluations" % (ncandidatesConsidered[0],))
+        print ("Cancelled search after %d evaluations" % nexpansions)
 
     if isinstance(bestKnown, partialSolution):
         return bestKnown.stages
@@ -1045,13 +1162,13 @@ def splitBurns(burns):
                 if nstages > 1:
                     for i in xrange(nstages - 1):
                         subname = ("%s [%d]" % (b.name, i))
-                        mysubburns = LinkedList.cons(burn(dV, b.accel, subname), mysubburns)
+                        mysubburns = cons(burn(dV, b.accel, subname), mysubburns)
                 i = nstages - 1
                 subname = ("%s [%d]" % (b.name, i))
-                mysubburns = LinkedList.cons(burn(dV, b.accel, subname, b.payload), mysubburns)
+                mysubburns = cons(burn(dV, b.accel, subname, b.payload), mysubburns)
                 recur(mysubburns, burnIdx + 1)
 
-    recur(LinkedList.nil, 0)
+    recur(nil, 0)
     return profiles
 
 # Local search trick, and pretty printing.
@@ -1065,9 +1182,9 @@ class analyst(object):
         self.totalDeltaV = sum(b.deltaV for b in self.burns)
 
     class stageData(object):
-        def __init__(self, burnIds, mustDump, payload):
+        def __init__(self, burnIds, dumpDV, payload):
             self.burnIds = burnIds
-            self.mustDump = mustDump
+            self.dumpDV = dumpDV    # delta-V capacity we can't use
             self.payload = payload
 
     def _deltaVMap(self, deltaVs):
@@ -1108,7 +1225,8 @@ class analyst(object):
     def analyze(self, stages):
         """
         Returns a list of burns per stage.
-        If the list is empty, the stage is wasted!
+        If the list is empty, the stage is wasted (for fuel; its thrust may
+        still be important)!
         The list will be passed to suggest and to prettyPrint later.
 
         Stages come in order from bottom up.
@@ -1133,9 +1251,7 @@ class analyst(object):
                     # TODO: actually the acceleration improves over time,
                     # so it might be enough now even though it wasn't at the
                     # start of the stage.
-                    print ("stage %d, burn %s: have accel %g, need %g" % (
-                        stageIdx, b.name, s.acceleration(), b.accel))
-                    mustDump = True
+                    mustDump = dV
                     break
                 else:
                     # We have dV left over, and we can use it.
@@ -1153,13 +1269,20 @@ class analyst(object):
                             break
                         b = self.burns[burnIdx]
                         burndV = b.deltaV
+            if burnIdx == len(self.burns) and dV > 0:
+                # Wasted excess at the end of the flight, which we usually
+                # want to dump instead of landing on!
+                mustDump = dV
+
             data.append(self.stageData(ids, mustDump, payload))
         return data
 
 
-    def suggest(self, stages, _):
+    def suggest(self, stages, analysis):
         """
         Suggest new profiles based on the solution we have.
+        I'm still struggling to get a non-buggy local improvement.
+
         * From the bottom up, look at each stage.  Produce a new profile
           that asks for the deltaV the stages provide, up to the total
           deltaV, and the max acceleration of any burn affected by this
@@ -1168,20 +1291,28 @@ class analyst(object):
         * From the top down, same thing.  In other words, any wasted deltaV at
           the end is pushed back, and hopefully we can squeeze some of it all
           the way back.
+
         Any other bright ideas?  Isp-weighted deltaV spreading?
 
         The stages are listed bottom-up.
         """
+        # Local improvement.  Assign the best we find to this variable.
+        improvedStages = None
+
+        # The stages listed top-down, if that helps.
+        revStages = tuple(reversed(tuple(stages)))
+        revAnalysis = tuple(reversed(analysis))
+
         def suggestDeltaVs(stages):
             """
             Suggest deltaVs that don't overshoot, following the given stages
             (which are either bottom-up or top-down).
-            If we end up with a stage with less than
             """
             dVremaining = self.totalDeltaV
             deltaVs = []
             for s in stages:
                 dV = s.achievedDeltaV()
+                if dV == 0: continue
                 if dV < dVremaining:
                     if dVremaining - dV < minStageDeltaV:
                         deltaVs.append(dVremaining)
@@ -1232,9 +1363,51 @@ class analyst(object):
 
         # suggest deltaV lists in both directions
         deltaVsUp = suggestDeltaVs(stages)
-        deltaVsDown = tuple(reversed(suggestDeltaVs(reversed(tuple(stages)))))
+        deltaVsDown = tuple(reversed(suggestDeltaVs(revStages)))
 
-        return ( makeProfile(deltaVsUp), makeProfile(deltaVsDown) )
+        # Rebuild the stages, trying to reduce capacity to drop wasted deltaV.
+        (lastStage, lastData) = (revStages[0], revAnalysis[0])
+        newStages = nil
+        for (s, d) in zip(revStages, revAnalysis):
+            payload = (newStages.head.fullMass if newStages else 0) + d.payload
+            if not d.burnIds:
+                # This is a completely wasted stage.  Rebuild it with no fuel.
+                # TODO: merge with the stage below if it has the same engine,
+                # or no engine, or if we have no engine.
+                newS = stage(0, payload, s.engineType, s.numEngines,
+                    newStages if s.asparagus else None, s.numTowers, s.altitude)
+            else:
+                # This stage is useful.  However, its mass may be reduced.
+                # How much dV we actually provide versus how much we can use
+                # (neither of which are how much we asked for), and try to
+                # trim our propellant use.
+                targetDeltaV = s.achievedDeltaV() - d.dumpDV
+                try:
+                    newS = stage(targetDeltaV, payload, s.engineType, s.numEngines,
+                        newStages if s.asparagus else None, s.numTowers, s.altitude)
+                except WeakEngineException:
+                    # This implies roundoff error, since we didn't change the engines.
+                    newS = None
+                if newS.propellantMass > s.propellantMass:
+                    # This implies roundoff, since we reduced the mass above.
+                    newS = None
+                if not newS:
+                    # I was hoping we'd get the same deltaV with less
+                    # propellant, but roundoff bit me; just use the same
+                    # propellant as before.
+                    newS = stage(targetDeltaV, payload, s.engineType, s.numEngines,
+                        newStages if s.asparagus else None, s.numTowers, s.altitude,
+                        propMassOverride = (s.propellantMass, s.tankMass))
+
+            newStages = cons(newS, newStages)
+        if newStages.head.fullMass < stages.head.fullMass:
+            print ("Locally improved from %g T to %g T" %
+                    (stages.head.fullMass, newStages.head.fullMass))
+            improvedStages = newStages
+
+        # Return the improved set of stages, and also return the potentially
+        # better profiles to search.
+        return ( improvedStages, ( makeProfile(deltaVsUp), makeProfile(deltaVsDown) ) )
 
 
     def prettyPrint(self, stages, data):
@@ -1266,8 +1439,8 @@ class analyst(object):
                 print ("  Stage %d: %g m/s, used for %d burns: %s" %
                     (sIdx, s.achievedDeltaV(), len(names), ", ".join(names)))
             print ("    %s" % (s,))
-            if d.mustDump:
-                print ("\t* must dump before next burn")
+            if d.dumpDV and sIdx != len(data) - 1:
+                print ("\t* must dump %g m/s before next burn" % d.dumpDV)
             if d.payload:
                 print ("\t* includes %g T payload" % d.payload)
 
@@ -1282,7 +1455,8 @@ profiles = splitBurns(burns)
 # Design the rocket!
 shrink = analyst(burns)
 soln = designRocket(profiles,
-            massToBeat = None, analyst = shrink, symmetries = symmetry)
+            massToBeat = None, analyst = shrink, symmetries = symmetry,
+            numBaseTowers = numBaseTowers)
 if soln:
     data = shrink.analyze(soln)
     shrink.prettyPrint(soln, data)
