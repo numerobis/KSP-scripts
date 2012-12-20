@@ -84,7 +84,7 @@ minStageDeltaV = 750
 # find the strict optimum given how the search works (which isn't actually
 # optimal).  Set lower to allow a progressively less optimal solution, but
 # search faster.
-improvementRatio = 0.99
+improvementRatio = 1
 
 
 
@@ -1063,13 +1063,13 @@ def designRocket(profiles, massToBeat = None,
                 (improvement, profiles) = analyst.suggest(newBest.stages, analysis)
                 profiles = list(profiles)
 
-                while improvement:
+                # Do only one round of improvement; assumption is the analyst
+                # already looped.
+                if improvement and improvement.head.fullMass < newBest.currentMass:
                     asPartial = partialSolution(None, LinkedList(improvement))
                     assert (asPartial < newBest)
                     newBest = asPartial
                     analysis = analyst.analyze(newBest.stages)
-                    (improvement, subprofiles) = analyst.suggest(newBest.stages, analysis)
-                    profiles.extend(subprofiles)
 
                 analyst.prettyPrint(newBest.stages, analysis)
                 return (newBest, False, profiles)
@@ -1078,6 +1078,7 @@ def designRocket(profiles, massToBeat = None,
         roots = makeRoots(profiles)
         nexpansions = 0
         nexpansionsLastPrinted = 0
+        print ("Starting to search %d configurations" % (len(roots)))
         while(len(roots)):
             # Make a pass over all the roots, expanding them one step further.
             # Any suggested new profiles will be appended, and therefore
@@ -1278,10 +1279,86 @@ class analyst(object):
         return data
 
 
+    def _locallyImprove(self, stages, analysis):
+        """
+        Rebuild the stages, trying to reduce capacity to drop wasted
+        deltaV.
+
+        Returns a new set of stages if we succeed at reducing the mass,
+        None if we fail.
+        """
+        # TODO: currently we only look at excess off the end of a series of
+        # stages.  We could look at excess off the start.
+        revStages = tuple(reversed(tuple(stages)))
+        revAnalysis = tuple(reversed(analysis))
+        (lastStage, lastData) = (revStages[0], revAnalysis[0])
+        newStages = nil
+        for (s, d) in zip(revStages, revAnalysis):
+            payload = d.payload + (newStages.head.fullMass if newStages else 0)
+
+            if not d.burnIds:
+                # This is a completely wasted stage.  Rebuild it with no fuel.
+                # TODO: merge with the stage below if it has the same engine,
+                # or no engine, or if we have no engine.
+                newS = stage(0, payload, s.engineType, s.numEngines,
+                    newStages if s.asparagus else None, s.numTowers, s.altitude)
+            else:
+                # This stage is useful.  However, its mass may be reduced by
+                # taking less propellant along.  Cruise stages just before
+                # a descent or ascent stage typically have some slop.  Even if
+                # there's no slop, stages above might now be lighter.
+                targetDeltaV = s.achievedDeltaV() - d.dumpDV
+                try:
+                    newS = stage(targetDeltaV, payload, s.engineType, s.numEngines,
+                        newStages if s.asparagus else None, s.numTowers, s.altitude)
+                except WeakEngineException:
+                    # This implies roundoff error, since we didn't change the engines.
+                    newS = None
+                if newS.propellantMass > s.propellantMass:
+                    # This implies roundoff, since we reduced the mass above.
+                    newS = None
+                if not newS:
+                    # I was hoping we'd get the same deltaV with less
+                    # propellant, but roundoff bit me; just use the same
+                    # propellant as before.
+                    newS = stage(targetDeltaV, payload, s.engineType, s.numEngines,
+                        newStages if s.asparagus else None, s.numTowers, s.altitude,
+                        propMassOverride = (s.propellantMass, s.tankMass))
+
+            newStages = cons(newS, newStages)
+
+        if newStages.head.fullMass < stages.head.fullMass:
+            print ("Locally improved from %g T to %g T" %
+                    (stages.head.fullMass, newStages.head.fullMass))
+            return newStages
+
+    def _suggestDeltaVs(self, stages):
+        """
+        Suggest deltaVs that don't overshoot, following the given stages
+        (which are either bottom-up or top-down).
+        """
+        dVremaining = self.totalDeltaV
+        deltaVs = []
+        for s in stages:
+            dV = s.achievedDeltaV()
+            if dV == 0: continue
+            if dV < dVremaining:
+                if dVremaining - dV < minStageDeltaV:
+                    deltaVs.append(dVremaining)
+                    break # after this, all stages are wasted
+                else:
+                    deltaVs.append(dV)
+                    dVremaining -= dV
+            else:
+                deltaVs.append(dVremaining)
+                break # after this, all stages are wasted
+        return deltaVs
+
     def suggest(self, stages, analysis):
         """
-        Suggest new profiles based on the solution we have.
-        I'm still struggling to get a non-buggy local improvement.
+        * First, try reducing the propellant in each stage to eliminate
+          wasted deltaV (which is typically at the end, or just before a
+          descent/ascent stage).
 
         * From the bottom up, look at each stage.  Produce a new profile
           that asks for the deltaV the stages provide, up to the total
@@ -1296,34 +1373,13 @@ class analyst(object):
 
         The stages are listed bottom-up.
         """
-        # Local improvement.  Assign the best we find to this variable.
-        improvedStages = None
+        # Local improvement.  Keep improving as long as we can!
+        improved = self._locallyImprove(stages, analysis)
+        while improved:
+            stages = improved
+            analysis = self.analyze(stages)
+            improved = self._locallyImprove(stages, analysis)
 
-        # The stages listed top-down, if that helps.
-        revStages = tuple(reversed(tuple(stages)))
-        revAnalysis = tuple(reversed(analysis))
-
-        def suggestDeltaVs(stages):
-            """
-            Suggest deltaVs that don't overshoot, following the given stages
-            (which are either bottom-up or top-down).
-            """
-            dVremaining = self.totalDeltaV
-            deltaVs = []
-            for s in stages:
-                dV = s.achievedDeltaV()
-                if dV == 0: continue
-                if dV < dVremaining:
-                    if dVremaining - dV < minStageDeltaV:
-                        deltaVs.append(dVremaining)
-                        break # after this, all stages are wasted
-                    else:
-                        deltaVs.append(dV)
-                        dVremaining -= dV
-                else:
-                    deltaVs.append(dVremaining)
-                    break # after this, all stages are wasted
-            return deltaVs
 
         def makeProfile(deltaVs):
             """
@@ -1361,53 +1417,16 @@ class analyst(object):
             assert len(newburns) > 0
             return burnProfile(newburns, startAltitude = startAltitude)
 
+        # reverse the stages (painful)
+        revStages = tuple(reversed(tuple(stages)))
+
         # suggest deltaV lists in both directions
-        deltaVsUp = suggestDeltaVs(stages)
-        deltaVsDown = tuple(reversed(suggestDeltaVs(revStages)))
+        deltaVsUp = self._suggestDeltaVs(stages)
+        deltaVsDown = tuple(reversed(self._suggestDeltaVs(revStages)))
 
-        # Rebuild the stages, trying to reduce capacity to drop wasted deltaV.
-        (lastStage, lastData) = (revStages[0], revAnalysis[0])
-        newStages = nil
-        for (s, d) in zip(revStages, revAnalysis):
-            payload = (newStages.head.fullMass if newStages else 0) + d.payload
-            if not d.burnIds:
-                # This is a completely wasted stage.  Rebuild it with no fuel.
-                # TODO: merge with the stage below if it has the same engine,
-                # or no engine, or if we have no engine.
-                newS = stage(0, payload, s.engineType, s.numEngines,
-                    newStages if s.asparagus else None, s.numTowers, s.altitude)
-            else:
-                # This stage is useful.  However, its mass may be reduced.
-                # How much dV we actually provide versus how much we can use
-                # (neither of which are how much we asked for), and try to
-                # trim our propellant use.
-                targetDeltaV = s.achievedDeltaV() - d.dumpDV
-                try:
-                    newS = stage(targetDeltaV, payload, s.engineType, s.numEngines,
-                        newStages if s.asparagus else None, s.numTowers, s.altitude)
-                except WeakEngineException:
-                    # This implies roundoff error, since we didn't change the engines.
-                    newS = None
-                if newS.propellantMass > s.propellantMass:
-                    # This implies roundoff, since we reduced the mass above.
-                    newS = None
-                if not newS:
-                    # I was hoping we'd get the same deltaV with less
-                    # propellant, but roundoff bit me; just use the same
-                    # propellant as before.
-                    newS = stage(targetDeltaV, payload, s.engineType, s.numEngines,
-                        newStages if s.asparagus else None, s.numTowers, s.altitude,
-                        propMassOverride = (s.propellantMass, s.tankMass))
-
-            newStages = cons(newS, newStages)
-        if newStages.head.fullMass < stages.head.fullMass:
-            print ("Locally improved from %g T to %g T" %
-                    (stages.head.fullMass, newStages.head.fullMass))
-            improvedStages = newStages
-
-        # Return the improved set of stages, and also return the potentially
-        # better profiles to search.
-        return ( improvedStages, ( makeProfile(deltaVsUp), makeProfile(deltaVsDown) ) )
+        # Return the improved set of stages (or the original set), and also
+        # return the potentially better profiles to search.
+        return ( stages, ( makeProfile(deltaVsUp), makeProfile(deltaVsDown) ) )
 
 
     def prettyPrint(self, stages, data):
@@ -1420,8 +1439,6 @@ class analyst(object):
         print ("  Ratio:         %g" % (m1/m0))
         print ("  Implied Isp:   %g" % Isp)
         # TODO: we're not counting waste when we're forced to dump fuel.
-        print ("  Wasted deltaV: %g m/s" %
-                (sum(s.achievedDeltaV() for s in stages) - self.totalDeltaV))
         if startAltitude == 0:
             print ("  Start on Kerbin surface")
         elif startAltitude is None:
@@ -1439,8 +1456,11 @@ class analyst(object):
                 print ("  Stage %d: %g m/s, used for %d burns: %s" %
                     (sIdx, s.achievedDeltaV(), len(names), ", ".join(names)))
             print ("    %s" % (s,))
-            if d.dumpDV and sIdx != len(data) - 1:
-                print ("\t* must dump %g m/s before next burn" % d.dumpDV)
+            if d.dumpDV:
+                if sIdx != len(data) - 1:
+                    print ("\t* must dump %g m/s before next burn" % d.dumpDV)
+                else:
+                    print ("\t* end mission with %g m/s to spare" % d.dumpDV)
             if d.payload:
                 print ("\t* includes %g T payload" % d.payload)
 
