@@ -69,3 +69,6 @@ class EmptyList(LinkedList):
 # Create EmptyList singleton
 LinkedList.nil = EmptyList()
 del EmptyList
+
+nil = LinkedList.nil
+cons = LinkedList.cons
