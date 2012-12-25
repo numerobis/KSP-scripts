@@ -3,33 +3,35 @@ import math
 from math import sqrt, cos, sin, exp, log
 
 from physics import g0, L2, quadratic
-"""
 
 """
+This module provides information about the planets and other major bodies in
+the KSP solar system.
+"""
 
-# The drag model in 0.18.1 is
+# The drag model in KSP 0.18.1 is
 #       F_{drag} = gamma P v^2 m
 # where P is atmospheric pressure, v is the speed, m the mass (as a standin
 # for cross-section).  gamma combines a bunch of coefficients in one
 # (including the 1/2 that would normally be there).  It is not actually
-# a constant, but it varies little over reported terminal velocities.
+# a constant, but it varies little over reported terminal velocities and over
+# the parts we actually use (though aero components have lower drag).
+#
 # And it's a round number.
-# Aero components have different drag coefficients, and all my equations
-# suffer about that.
 gamma = 0.001
 
-# Atmospheric pressure at a body is k e^{altitude/scale}
-# Kerbin is 1*e^{altitude/5000}, Duna is 0.2e^{altitude/3000}, etc.
+
 class planet(object):
 
-    def __init__(self, name, gravity, gravityParam, radiusKm, sidereal, datumPressure, scale):
+    def __init__(self, name, gravityParam, radiusKm, sidereal, datumPressure, scale):
         self.name = name
         self.datumPressure = datumPressure # atm
         self.scale = scale      # m (pressure falls by e every scale altitude)
         self.siderealRotationSpeed = sidereal # m/s
         self.radius = radiusKm * 1000 # stored in m
-        self._gravity = gravity # m/s^2
         self.mu = gravityParam  # m^3/s^2
+
+    def __str__(self): return self.name
 
     def gravity(self, altitude = 0):
         """
@@ -38,13 +40,8 @@ class planet(object):
 
         altitude is in meters
         """
-        if altitude == 0:
-            return self._gravity
-        else:
-            baseradius = self.radius
-            altradius = baseradius + altitude
-            fraction = baseradius / altradius
-            return self._gravity * fraction * fraction
+        r = self.radius + altitude
+        return self.mu / (r*r)
 
     def orbitalVelocity(self, altitude):
         """
@@ -55,6 +52,15 @@ class planet(object):
         altitude is in meters.
         """
         return sqrt(self.mu / (self.radius + altitude))
+
+    def escapeVelocity(self, altitude):
+        """
+        At a given altitude, return the minimum velocity that will result in
+        escape.
+
+        altitude is in meters.
+        """
+        return sqrt(2 * self.mu / (self.radius + altitude))
 
     def determineOrbit(self, h, velocity):
         """
@@ -180,7 +186,9 @@ class planet(object):
         # log(1e6) ~ 13.81551...
         return self.scale * 13.81551
 
-kerbin = planet("Kerbin",   g0, 3531600000000, 600, 174.5, 1,   5000)
-eve    = planet("Eve",   16.68, 8171730200000, 700,  54.6, 5,   7000)
-laythe = planet("Laythe", 7.85, 1962000000000, 500,  59.3, 0.8, 4000)
+kerbin = planet("Kerbin", 3531600000000, 600,  174.5,  1,   5000)
+eve    = planet("Eve",    8171730200000, 700,   54.6,  5,   7000)
+laythe = planet("Laythe", 1962000000000, 500,   59.3,  0.8, 4000)
+jool   = planet("Jool",     2.82528E+14, 600, 1047.2, 15,   9000)
 
+planets = dict([ (p.name, p) for p in (kerbin, eve, laythe, jool) ])

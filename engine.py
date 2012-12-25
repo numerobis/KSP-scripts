@@ -1,7 +1,6 @@
 from __future__ import division
 import math
 
-import planet
 from physics import g0
 
 """
@@ -9,6 +8,15 @@ This module encodes information about the engines available in KSP.
 
 It also includes some functions related to the ideal rocket equation.
 """
+
+
+
+###########################################################################
+# This exception is thrown when we ask for the required propellant + tank mass,
+# but it's infinite because of insufficient Isp.
+class WeakEngineException(Exception):
+    def __init__(self, Isp):
+        self.Isp = Isp
 
 ###########################################################################
 
@@ -24,12 +32,16 @@ class engine(object):
         self.radial = radial        # true of false
         self.large = large          # true: 2m, false: 1m (can use bi/tricoupler)
 
-    def Isp(self, altitude, planet = planet.kerbin):
+    def __str__(self): return self.name
+
+    def Isp(self, planet, altitude):
         # Assumption: Isp is in a linear correspondence with pressure,
-        # clipped to 1 Atm (as determined by experiments on Eve).
+        # clipped to 1 Atm (as determined by experiments on Kerbin and Eve).
         #
         # This is patently false for the jets.
         #
+        if planet is None or altitude is None:
+            return self.IspVac
         pressure = planet.pressure(altitude)
         if pressure > 1: pressure = 1
         Isp = pressure * self.IspAtm + (1.0 - pressure) * self.IspVac
@@ -43,7 +55,7 @@ class engine(object):
 # radial engines above and we needn't add towers.
 noEngine = engine("none", 0, 0, 0, 0, radial=True)
 
-types = [
+types = (
     # One of the choices of engines is to have none...
     noEngine,
 
@@ -71,12 +83,12 @@ types = [
     # engine("Sepratron", 100,    0.15,     20, solid=9),
     # engine("RT-10",     240,    0.5,     250, solid=433),
     # engine("BACC",      250,    1.75,    300, solid=850),
-]
+)
 
 # To help the heuristics, choose the best possible Isp at a given altitude.
-def maxIsp(altitude):
-    ispMaxEngine = max(types, key = lambda x: x.Isp(altitude))
-    return ispMaxEngine.Isp(altitude)
+def maxIsp(planet, altitude):
+    ispMaxEngine = max(types, key = lambda x: x.Isp(planet, altitude))
+    return ispMaxEngine.Isp(planet, altitude)
 
 # To help the heuristics, choose the best possible mass to achieve a given
 # thrust.
@@ -190,7 +202,7 @@ def minThrustForBurnTime(deltaV, Isp, m0, time):
     m1 = propellantMass(deltaV, Isp, m0)
     return m1 * Isp * g0 / time
 
-def combineIsp(engines, altitude):
+def combineIsp(engines, planet, altitude):
     """
     Given a dictionary mapping engine -> count, compute the
     Isp of the system at the given altitude.
@@ -198,26 +210,13 @@ def combineIsp(engines, altitude):
     This is the weighted sum of the impulses of each type, with weights
     based off the relative mass flow rate of the engines.
     """
-    # the mass flow rate of an engine is thrust / (Isp * g0)
-    # (unless there's no thrust, then it's 0 even if Isp is 0).
-    # so the mass is sum(num_i * thrust_i / (Isp_i * g0))
-    # the relative mass of engine type j is
-    #   [num_j*thrust_j / (Isp_j*g0)] / sum(...)
-    # and we cancel out the g0.
-    def numerator(engcount):
-        (engine, count) = engcount
-        totalThrust = engine.thrust * count
-        if totalThrust == 0: return 0
-        return count * engine.thrust / engine.Isp(altitude)
-    flows = [ numerator(x) for x in engines.iteritems() ]
-    total = sum(flows)
-    if total == 0: return 0
-    alpha = [ f / total for f in flows ]
-    weightedIsp = [
-        engine.Isp(altitude) * a
-            for (engine, a) in zip(engines.iterkeys(), alpha)
-    ]
-    return sum(weightedIsp)
+    def alpha(e, c):
+        # no thrust => no contribution (even if Isp is zero)
+        if c == 0 or e.thrust == 0: return 0
+        else: return e.thrust * c / e.Isp(planet, altitude)
+
+    return (sum(e.thrust * c for (e,c) in engines.iteritems())
+        /   sum(alpha(e,c)   for (e,c) in engines.iteritems()))
 
 # combine 3x nuke and sail
 # print combineIsp( [(engines[1], 1), (engines[2], 3)] )

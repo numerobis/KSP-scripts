@@ -5,449 +5,34 @@ from numbers import Number
 import heapq
 from LinkedList import LinkedList, cons, nil
 
-###########################################################################
-## Set these parameters, then run the script (a poor man's argument
-## processing).
-
-# Where do we start in Kerbin's atmosphere.  0 means the ground, n means n
-# meters high, None means we start in space.
-# We assume we start there along an optimal trajectory.
-# If you can ride a jet to about 18km, you will save nearly 2500 m/s.
-startAltitude = 18000
-
-# How many burns do you need after circularizing, and how much acceleration
-# in m/s^2 (aka thrust:mass ratio) do you need for each burn?  Here we go to
-# the Mun and land.  We want to maintain 1m/s^2 for the tran-mun injection
-# burn, and 3m/s^2 (nearly twice moon gravity) for the landing.  Then we do
-# it again in reverse.  Don't worry about staging; the script (tries to)
-# handle that.
-# Each burn also has a payload.  The last payload has what we're left with when
-# all has been consumed; if you land and don't mind leaving the lander legs behind,
-# you can give that landing burn an extra payload.
-class burn(object):
-    def __init__(self, deltaV, accel, name, payload = 0):
-        self.deltaV = deltaV
-        self.accel = accel
-        self.name = name
-        self.payload = payload
-
-munreturnburns = [
-    burn(842, 1, "TMI"),
-    burn(1000, 3, "mun land", payload = 0.5), # lander legs, ladder, etc
-    burn(1000, 3, "mun depart"),
-    burn(842, 1, "TKI", payload = 4.5) # capsule, 2 parachutes, RTG
-]
-
-# This is for a return from Laythe starting from Laythe orbit.
-#startAltitude = None
-#burns = [
-#    burn(1500, 7.85*2, "Laythe liftoff"),
-#    burn(1000, 1, "Laythe escape"),
-#    burn(1200, 1, "Trans-Kerbin"),
-#    burn(250, 1, "Kerbin reentry", payload = 12.63)
-#]
-# Answer: about 46 tonnes.
-
-startAltitude = 0
-laythereturnburns = [
-    burn(1915, 1, "Trans-Jool"),
-    # Payload here is left on Laythe: 4x hab modules, legs, chutes, instruments.
-    burn(1500, 1, "Laythe intersect and land", 14.75),
-    burn(2500, 7.85*2, "Laythe liftoff"),
-    burn(1000, 1, "Laythe escape"),
-    burn(1200, 1, "Trans-Kerbin"),
-    # Payload here is what we return to Kerbin with: capsule, 2x modules,
-    # panels, legs, chutes, instruments, ...
-    burn(250, 1, "Kerbin reentry", payload = 10.25)
-]
-burns = munreturnburns
-
-# We must specify the kind of symmetry we want our spacecraft to have.
-# 2 is almost always optimal, but it may end up with a spacecraft that is too
-# fat to be built in the VAB.  This can be a list; we'll try them all.
-symmetry = 2
-
-# Do the engines come below the final payload, or must they be side-mounted?
-# 1 means to put the engines below; if side-mounted, specify how many sides.
-# It's perfectly valid to have payload, 2 side-mounted engines, and thenceforth
-# 4-fold symmetry, etc.
-numBaseTowers = 2
-
-# The automatic stage splitter will try splitting stages that achieve more than
-# this much deltaV.  Smaller values give better rockets but longer
-# optimization time.
-minStageDeltaV = 750
-
-# The search will ignore solutions that can only improve the current best by 1%
-# or less (i.e. the mass of a new solution must be less than 0.99 times the old
-# solution or else we don't really care).  You can change that; set to 1 to
-# find the strict optimum given how the search works (which isn't actually
-# optimal).  Set lower to allow a progressively less optimal solution, but
-# search faster.
-improvementRatio = 1
-
-
-
-###########################################################################
-# Standard gravity.
-g0 = 9.80665
-
-
-# Atmospheric pressure at a body is k e^{altitude/scale}
-# Kerbin is 1*e^{altitude/5000}, Duna is 0.2e^{altitude/3000}, etc.
-class planet(object):
-    # F_{drag} = P v^2 m gamma, where P is atmospheric pressure, v is
-    # the speed, m the mass (as a standin for cross-section).  gamma
-    # combines a bunch of coefficients in one (including the 1/2 that would
-    # normally be there).  It might not actually be a
-    # constant, but it varies little over reported terminal velocities.
-    gamma = 0.001
-
-    # Following pretty much an optimal climb slope to a 100km orbit at Kerbin,
-    # here's a correspondence between deltaV and altitude.  I haven't figured
-    # out how to calculate this correctly for other planets... TODO
-    climbSlope = [
-        # deltaV, altitude
-        (287, 923),
-        (509, 2117),
-        (731, 3461),
-        (957, 5044),
-        (1188, 6900),
-        (1437, 9169),
-        (1723, 12138),
-        (2102, 16248),
-        (2729, 22722),
-        (3069, 32500)
-    ]
-
-    def __init__(self, name, gravity, radius, base, scale):
-        self.name = name
-        self.base = base
-        self.scale = scale
-        self.radius = radius # in km
-        self._gravity = gravity
-
-    def gravity(self, altitude = 0):
-        """
-        Return the gravitational acceleration at a given altitude above the
-        surface.
-        """
-        if altitude == 0:
-            return self._gravity
-        else:
-            baseradius = self.radius
-            altradius = baseradius + (altitude / 1000)
-            fraction = baseradius / altradius
-            return self._gravity * fraction * fraction
-
-    def terminalVelocity(self, altitude):
-        """
-        Return the terminal velocity at a given altitude.
-        This is the speed at which drag is as strong as gravity.
-        """
-
-        # v = sqrt(g/ (alpha * gamma * e^{-altitude/beta}))
-        # Then pull the e term out, and remember that gravity changes
-        # (slightly) with altitude.
-        return math.exp(0.5 * altitude / beta) * math.sqrt(
-                    self.gravity(altitude) / (gamma * self.base) )
-
-    def optimalDeltaV(self, altitude):
-        """
-        Return the deltaV needed to get to the given altitude on an optimal
-        glide slop.  This means we have achieved terminal velocity.
-
-        If the altitude is in orbit, return 4700 (the 100km orbit
-        altitude).
-        """
-        if altitude is None: return 4700
-        for (i, dataPoint) in enumerate(self.climbSlope):
-            if dataPoint[1] == altitude:
-                return dataPoint[0]
-            elif dataPoint[1] > altitude:
-                # linearly (!) interpolate
-                if i == 0:
-                    alpha = altitude / dataPoint[1]
-                    return alpha * dataPoint[0]
-                else:
-                    prevPoint = self.climbSlope[i-1]
-                    alpha = ((altitude - prevPoint[1]) /
-                            (dataPoint[1] - prevPoint[1]))
-                    return (alpha * dataPoint[0] +
-                        (1-alpha) * prevPoint[0])
-        return None
-
-    def optimalAltitude(self, deltaV):
-        """
-        Return the altitude after burning deltaV on an optimal climb slope.
-        This means we have achieved terminal velocity, and have burned an equal
-        amount on gravity and drag.
-
-        Return None if deltaV puts us outside the atmosphere.
-        """
-        # TODO: I don't understand the math yet, so just look it up.
-        for (i, dataPoint) in enumerate(self.climbSlope):
-            if dataPoint[0] == deltaV: return dataPoint[1]
-            elif dataPoint[0] > deltaV:
-                # linearly (!) interpolate
-                if i == 0:
-                    alpha = deltaV / dataPoint[0]
-                    return alpha * dataPoint[1]
-                else:
-                    prevPoint = self.climbSlope[i-1]
-                    alpha = ((deltaV - prevPoint[0]) /
-                            (dataPoint[0] - prevPoint[0]))
-                    return (alpha * dataPoint[1] +
-                        (1-alpha) * prevPoint[1])
-        return None
-
-    def pressure(self, altitude):
-        """
-        Return the atmospheric pressure in Atm, which is a factor for
-        interpolating the Isp of engines.
-        """
-        if altitude is None: p = 0
-        else: p = self.base * math.exp(-altitude / self.scale)
-        #print ("pressure at %s: %g" % (altitude, p))
-        return p
-
-kerbin = planet("kerbin", g0, 600, 1, 5000)
-
-##############################
-## Available engines
-class engine(object):
-    def __init__(self, name, IspAtm, IspVac, mass, thrust,
-            vectoring = False, radial = False, large = False):
-        self.name = name
-        self.IspAtm = IspAtm        # seconds
-        self.IspVac = IspVac        # seconds
-        self.mass = mass            # tonnes
-        self.thrust = thrust        # kN
-        self.vectoring = vectoring  # true or false
-        self.radial = radial        # true of false
-        self.large = large          # true: 2m, false: 1m (can use bi/tricoupler)
-
-    def Isp(self, altitude):
-        # Assumption: Isp is in a linear correspondence with pressure.
-        # False for the turbojet.
-        pressure = kerbin.pressure(altitude)
-        Isp = pressure * self.IspAtm + (1.0 - pressure) * self.IspVac
-        return Isp
-
-    def __str__(self):
-        return self.name
-
-# We have a none engine for fuel-only stages in asparagus staging.  It has no
-# mass, no thrust, Isp doesn't matter.  Make it radial, so that we can have
-# radial engines above and we needn't add towers.
-g_noEngine = engine("none", 0, 0, 0, 0, radial=True)
-
-g_engines = [
-    # One of the choices of engines is to have none...
-    g_noEngine,
-
-    # Jets.  TODO
-
-    # Bipropellant engines, in order of Isp first, and thrust:mass ratio second
-    engine("LV-N",      220, 800,    2.25,     60, vectoring=True),
-    engine("Aerospike", 388, 390,    1.5,     175),
-    engine("LV-909",    300, 390,    0.5,      50, vectoring=True),
-    engine("Poodle",    270, 390,    2.5,     220, vectoring=True, large=True),
-    engine("LV-T30",    320, 370,    1.25,    215),
-    engine("LV-T45",    320, 370,    1.5,     200, vectoring=True),
-    engine("Mainsail",  280, 330,    6,      1500, vectoring=True, large=True),
-    engine("Mark 55",   290, 320,    0.9,     120, vectoring=True, radial=True),
-    engine("24-77",     250, 300,    0.09,     20, vectoring=True, radial=True),
-    engine("LV-1",      220, 290,    0.03,      1.5),
-
-    # The ion engine is a bit off: we need a *lot* of power for it,
-    # which starts to add more mass than just the 0.25.  Also, the
-    # dry mass is much more than 1/4 of the propellant, and the number
-    # of containers starts to matter.  So just ignore it.
-    #engine("ion",      4200,4200,    0.25,      0.5),
-
-    # Note: solid-fuel rockets aren't handled correctly yet.
-    # engine("Sepratron", 100,    0.15,     20, solid=9),
-    # engine("RT-10",     240,    0.5,     250, solid=433),
-    # engine("BACC",      250,    1.75,    300, solid=850),
-]
-
-# To help the heuristics, choose the best possible Isp at a given altitude.
-def maxIsp(altitude):
-    ispMaxEngine = max(g_engines, key = lambda x: x.Isp(altitude))
-    return ispMaxEngine.Isp(altitude)
-
-# To help the heuristics, choose the best possible mass to achieve a given
-# thrust.
-maxThrustPerMassEngine = max(g_engines, key =
-        lambda x: 0 if x.thrust == 0 else x.thrust / x.mass)
-def lightestEngineForThrust(thrust):
-    num = thrust / maxThrustPerMassEngine.thrust
-    return (maxThrustPerMassEngine, num)
-
-#class tank(object):
-#    def __init__(self, name, drymass, liquid, oxidizer):
-#        """
-#        Liquid and oxidizer in 5kg units (!?); drymass in tonnes.
-#        """
-#        self.name = name
-#        self.drymass = drymass
-#        self.propellant = drymass + (liquid+oxidizer) * 0.005
-#        self.fullmass = drymass + self.propellant
-
-## Store the tanks sorted by capacity.  But only the big tanks; the two
-## small tanks I don't feel like handling.
-#tanks = [
-#    tank("Jumbo-64", 4, 2880, 3520),
-#    tank("X200-32", 2, 1440, 1760),
-#    tank("X200-16", 1, 720, 880),
-#    tank("FL-T800 or X200-8", 0.5, 360, 440),
-#    tank("FL-T400", 0.25, 180, 220),
-#    tank("FL-T200", 0.125, 90, 110),
-#    tank("Oscar-B", 0.015, 5.735, 7),
-#    tank("ROUND-8", 0.025, 10, 12.2),
-#]
-
-##############################
-## Tsiokolvsky rocket equation
-
-beta = 8 # ratio of propellant mass : dry mass in the big stock tanks.
-
-def alpha(deltaV, Isp):
-    # Corner cases: if deltaV is 0, alpha is 1: m1 = m0 obviously.
-    # If Isp is 0, alpha is undefined; raise an exception
-    if deltaV == 0: return 1
-    if Isp == 0: raise WeakEngineException(Isp)
-
-    return math.exp(deltaV / (Isp * g0))
-
-def propellantMass(deltaV, Isp, m0):
-    return m0 * (alpha(deltaV, Isp) - 1)
-
-def burnMass(deltaV, Isp, m0):
-    """
-    Return the mass of propellant and tanks that we'll need to burn.
-
-    assuming tanks hold 8 times their mass.  The assumption is false
-    for some of the smallest tanks.
-
-    Return None if it is impossible to achieve the deltaV with that given
-    Isp given the mass of the tanks.
-
-    deltaV: m/s
-    Isp: s
-    m0: tonnes, should include payload, engines, decouplers, but
-        not the propellant and tanks we're using.
-
-    return (propellant mass, tank mass)
-    """
-    # The amount of fuel we need is derived from the ideal rocket
-    # equation.  Let alpha = e^{deltaV/Isp.g0}, beta = ratio of
-    # propellant to dry mass of a tank.  Then:
-    # tankMass = (alpha-1) * payload / (1 - alpha + beta)
-    # Where the relevant payload here includes engines and decouplers.
-    # Clearly, if (1-alpha+beta) <= 0 then we are in an impossible
-    # state: this corresponds to needing infinite fuel.
-    a = alpha(deltaV, Isp)
-    beta = 8 # TODO: handle the smaller, less efficient tanks too!
-    if 1 - a + beta <= 0: raise WeakEngineException(Isp)
-    tankMass = m0 * (a - 1) / (1 - a + beta)
-    propMass = tankMass * beta
-    return (propMass, tankMass)
-
-
-def burnTime(deltaV, Isp, thrust, m0):
-    """
-    Return the time needed to perform the burn.
-    m0 is the dry mass including tanks.
-    """
-    # If there's no deltaV, or no mass, we don't burn at all.
-    if deltaV == 0 or m0 == 0: return 0
-
-    # If there's no thrust but we want to move, problem...
-    if Isp == 0 or thrust == 0:
-        raise WeakEngineException(Isp)
-
-    # The mass flow rate of an engine is thrust / (Isp * g0)
-    # The mass we expel is from the ideal rocket equation.
-    # The amount of time we burn is thus mprop / (thrust/(Isp*g0))
-    mprop = propellantMass(deltaV, Isp, m0)
-    return mprop * Isp * g0 / thrust
-
-def minThrustForBurnTime(deltaV, Isp, m0, time):
-    """
-    Return the minimum thrust necessary to achieve a burn in the time
-    limit.
-    m0 is the dry mass including tanks.
-    """
-    m1 = propellantMass(deltaV, Isp, m0)
-    return m1 * Isp * g0 / time
-
-def combineIsp(engines, altitude):
-    """
-    Given a dictionary mapping engine -> count, compute the
-    Isp of the system at the given altitude.
-
-    This is the weighted sum of the impulses of each type, with weights
-    based off the relative mass flow rate of the engines.
-    """
-    # the mass flow rate of an engine is thrust / (Isp * g0)
-    # (unless there's no thrust, then it's 0 even if Isp is 0).
-    # so the mass is sum(num_i * thrust_i / (Isp_i * g0))
-    # the relative mass of engine type j is
-    #   [num_j*thrust_j / (Isp_j*g0)] / sum(...)
-    # and we cancel out the g0.
-    def numerator(engcount):
-        (engine, count) = engcount
-        totalThrust = engine.thrust * count
-        if totalThrust == 0: return 0
-        return count * engine.thrust / engine.Isp(altitude)
-    flows = [ numerator(x) for x in engines.iteritems() ]
-    total = sum(flows)
-    if total == 0: return 0
-    alpha = [ f / total for f in flows ]
-    weightedIsp = [
-        engine.Isp(altitude) * a
-            for (engine, a) in zip(engines.iterkeys(), alpha)
-    ]
-    return sum(weightedIsp)
-
-# combine 3x nuke and sail
-# print combineIsp( [(engines[1], 1), (engines[2], 3)] )
-
+import ascent
+import engine
+import physics
 
 ##############################
 #
-class WeakEngineException(Exception):
-    def __init__(self, Isp): self.Isp = Isp
-class MoarBoosters(Exception): pass
 
 class stage(object):
     """
     """
-    def __init__(self, deltaV, payload, engineType, nEngines, laterStages,
-                numTowers, altitude, propMassOverride = None):
+    def __init__(self, deltaV, payload, engineType, nEngines, laterEngines,
+                numTowers, planet, altitude, propMassOverride = None):
 
         # Calculate the effective Isp including later stages.
-        allEngines = { engineType : nEngines }
-        thrust = engineType.thrust * nEngines
-        if engineType.vectoring:
-            vectoringThrust = engineType.thrust * nEngines
+        allEngines = dict(laterEngines.iteritems() if laterEngines else [])
+        if engineType in allEngines:
+            allEngines[engineType] += nEngines
         else:
-            vectoringThrust = 0
-
-        if not laterStages:
-            Isp = engineType.Isp(altitude)
-        else:
-            self.collectUsableEngines(laterStages, allEngines)
-            Isp = combineIsp(allEngines, altitude)
-            thrust += laterStages.head.thrust
-            vectoringThrust += laterStages.head.vectoringThrust
+            allEngines[engineType] = nEngines
+        thrust = sum(e.thrust * count for (e, count) in allEngines.iteritems())
+        vectoringThrust = sum(e.thrust * count for (e, count) in
+            allEngines.iteritems() if e.vectoring)
+        Isp = engine.combineIsp(allEngines, planet, altitude)
 
         # Calculate masses.
         # Engine mass is specified already.  We only count the engines
         # being dumped in this stage.
-        # We add 0.05 for decouplers, struts, fuel lines.
+        # We add 0.05 per decoupler.
         # Dry mass is payload, engines, and empty tanks.
         engineMass = engineType.mass * nEngines
         decouplerMass = self._decouplerConstant * numTowers
@@ -455,20 +40,21 @@ class stage(object):
 
         # Get the propellant mass, and distribute it over the towers.
         #
-        # TODO: handle SRBs.
-        if propMassOverride:
-            (propMass, tankMass) = propMassOverride
-        else:
-            (propMass, tankMass) = burnMass(deltaV, Isp, dryMassNoTanks)
-
         # Round up to fit an integer number of tanks on each tower.
         #
         # By the rocket equation, bringing extra unburned mass is OK, we'll
         # just finish our burn without finishing our fuel.  We can dump the
         # excess, or use it for the next stage burn.  So we round up to an
         # integer fuel mass per tower.
-        propMass = math.ceil(propMass / numTowers) * numTowers
-        tankMass = propMass / beta
+        #
+        # TODO: handle SRBs.
+        #
+        if propMassOverride:
+            (propMass, tankMass) = propMassOverride
+        else:
+            (propMass, tankMass) = engine.burnMass(deltaV, Isp, dryMassNoTanks)
+            propMass = math.ceil(propMass / numTowers) * numTowers
+            tankMass = propMass / engine.beta
 
         dryMass = dryMassNoTanks + tankMass
         fullMass = dryMass + propMass
@@ -479,7 +65,7 @@ class stage(object):
         self.engineType = engineType
         self.numEngines = nEngines
         self.numTowers = numTowers
-        self.asparagus = bool(laterStages)
+        self.asparagus = bool(laterEngines)
         self.engineMass = engineMass
         self.decouplerMass = decouplerMass
         self.propellantMass = propMass
@@ -487,22 +73,25 @@ class stage(object):
         self.dryMass = dryMass
         self.fullMass = fullMass
         self.Isp = Isp
-        self.burnTime = burnTime(deltaV, Isp, thrust, dryMass)
+        self.burnTime = engine.burnTime(deltaV, Isp, thrust, dryMass)
         self.thrust = thrust
         self.vectoringThrust = vectoringThrust
         self.altitude = altitude
+        self.planet = planet
 
     def achievedDeltaV(self):
-        return self.Isp * g0 * math.log(self.fullMass / self.dryMass)
+        return self.Isp * physics.g0 * math.log(self.fullMass / self.dryMass)
 
     def acceleration(self):
         return self.thrust / self.fullMass
 
-    def collectEngines(self, dict):
-        if self.engineType in dict:
-            dict[self.engineType] += self.numEngines
+    def collectEngines(self, d = None):
+        if d is None: d = dict()
+        if self.engineType in d:
+            d[self.engineType] += self.numEngines
         else:
-            dict[self.engineType] = self.numEngines
+            d[self.engineType] = self.numEngines
+        return d
 
     @staticmethod
     def collectUsableEngines(stages, engineDict = None):
@@ -544,46 +133,15 @@ class stage(object):
                  self.Isp)
         )
 
-class burnRequirement(object):
+def suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload, engineType,
+        altitude = None, planet = None,
+        laterEngines = dict(), acceleration = None):
     """
-    Defines requirements for a burn.
-    """
-    def __init__(self, burnTime = None, acceleration = None):
-        self.burnTime = burnTime
-        self.acceleration = acceleration
-
-    def satisfiedBy(self, stage):
-        """
-        Given a proposed stage, does it satisfy the burn requirements?
-        """
-        if self.burnTime and stage.burnTime > self.burnTime: return False
-        if self.acceleration:
-            # thrust is in kN, mass in tonnes, so the ratio is m/s^2
-            accel = stage.thrust / stage.fullMass
-            if accel < self.acceleration: return False
-        # Nothing failed => success.
-        return True
-
-    def __str__(self):
-        if self.burnTime is None and self.acceleration is None:
-            return "unlimited burn"
-        elif self.burnTime is None:
-                return ("min %g m/s^2" % self.acceleration)
-        elif self.acceleration is None:
-            return ("max %gs burn" % self.burnTime)
-        else:
-            return ("min %g m/s^2, max %gs burn"
-                        % (self.acceleration, self.burnTime))
-
-def suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload, engineType, altitude,
-              burnRequirement = None, laterStages = []):
-    """
-    Given an engine type, a maximum burn time,
-    deltaV, and payload, return the stage description.
-    This is where we choose the number of engines (the type is given).
+    Given an engine type, return the stage description.
+    This is where we choose the number of engines (the type is given, but we
+    have to achieve a certain acceleration).
     We maintain the desired symmetry.
-    If we are asparagus staging, specify the list of later stages we can
-    use.
+    If we are asparagus staging, specify the list of later engines we can use.
 
     Returns a list of stages.  Each item is a choice for number of engines, and
     the required fuel, subject to symmetry requirements.
@@ -595,7 +153,7 @@ def suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload, engineType, a
     """
     # If we aren't asparagus staging (or this is the first stage), we need
     # a vectoring engine.
-    if not laterStages and not engineType.vectoring:
+    if not laterEngines and not engineType.vectoring:
         return []
 
     # How many towers do we have?
@@ -604,26 +162,32 @@ def suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload, engineType, a
     # according to symmetry, attached to the side of the previous stage.  Then,
     # further we can add any number of towers to this stage, according to
     # symmetry.  I'm allowing up to 2 more steps.
-    for e in stage.collectUsableEngines(laterStages).iterkeys():
+    for e in laterEngines:
         if not e.radial:
             numBaseTowers = symmetry
             break
-    numTowerChoices = [ numBaseTowers + symmetry * i for i in range(3) ]
+    if engineType == engine.noEngine:
+        # don't try adding more of these to get more thrust!
+        numTowerChoices = [ numBaseTowers ]
+    else:
+        numTowerChoices = [ numBaseTowers + symmetry * i for i in range(3) ]
 
-    def tryNumTowers(numTowers):
+    def tryNumTowers(numTowers, nEnginesAttempted):
         """
         Given a specified number of towers, try to make a stage with as few
         engines as possible.  Return None if we can't fit enough engines or
         the engine type is too weak, etc.
         """
         # Count up how many engines we might be able to use.
-        # TODO: I'm not allowing making a tower with side towers.  That limits
-        # a lot of things (particularly large loads).
         # TODO: I'm not allowing mixing engine types.  In particular, you could
         # have a stage with both standard and radial engines; or if you have
         # more than one tower, you could use a bicoupler or tricoupler with 2
         # types of engines.
-        if engineType.large:
+        if engineType == engine.noEngine:
+            # The "none" engine is just an asparagus fuel stage.
+            numEngines = [ 1 ]
+            extraMass = [ 0 ]
+        elif engineType.large:
             # We can only fit one engine on each tower.
             numEngines = [ numTowers ]
             extraMass = [ 0 ]
@@ -651,13 +215,15 @@ def suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload, engineType, a
                 0.3 * numTowers ] # bicoupler with 2 bicouplers under it
 
         for (n, xmass) in zip(numEngines, extraMass):
+            if n in nEnginesAttempted: continue
+            else: nEnginesAttempted.add(n)
             try:
-                s = stage(deltaV, payload + xmass, engineType, n, laterStages,
-                          numBaseTowers, altitude)
-            except WeakEngineException, e:
+                s = stage(deltaV, payload + xmass, engineType, n, laterEngines,
+                          numBaseTowers, planet, altitude)
+            except engine.WeakEngineException, e:
                 # Our Isp is too low to get anywhere.  Check if adding more
                 # engines will improve the Isp.
-                if e.Isp < engineType.Isp(altitude):
+                if e.Isp < engineType.Isp(planet, altitude):
                     continue # Adding more may help.
                 else:
                     return None # Adding more will get us nowhere.
@@ -669,7 +235,7 @@ def suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload, engineType, a
                     # another type.
                     return None
 
-            if not burnRequirement.satisfiedBy(s):
+            if s.thrust < acceleration * s.fullMass:
                 # Not enough thrust, add more thrust.
                 continue
 
@@ -682,21 +248,24 @@ def suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload, engineType, a
 
     # For each choice of number of towers, try that number of towers.
     # That's too ridiculous for radials, so instead, return just the first
-    # number of radials that works.
+    # number of radials that gives enough thrust.
     choices = []
+    nEnginesAttempted = set()
     for n in numTowerChoices:
-        s = tryNumTowers(n)
+        s = tryNumTowers(n, nEnginesAttempted)
         if s is None: continue
         if engineType.radial:
             return [s]
         else:
             choices.append(s)
+
     return choices
 
 
-def designStage(symmetry, numBaseTowers, deltaV, payload, altitude,
-                laterStages = [],
-                burnRequirement = None):
+def designStage(symmetry, numBaseTowers, deltaV, payload,
+                altitude, planet,
+                laterEngines = [],
+                acceleration = None):
     """
     Given a payload mass (i.e. the mass of the next stage), calculate the
     type of engine, the number of engines needed if we have a limited burn
@@ -709,17 +278,18 @@ def designStage(symmetry, numBaseTowers, deltaV, payload, altitude,
 
     deltaV in m/s
     payload in tonnes
-    burnRequirement optional, an instance of a 'burn'
-    laterStages: list of later stages whose thrust we can use in asparagus
+
+    laterEngines: list of engines on upper stages that we can use in asparagus
         staging.
 
     Returns a list of possibilities in arbitrary order.
     """
     choices = []
-    for engine in g_engines:
+    for eType in engine.types:
         choices.extend(
             suggestEngineNumbers(symmetry, numBaseTowers, deltaV, payload,
-                    engine, altitude, burnRequirement, laterStages)
+                    eType, altitude=altitude, planet=planet,
+                    acceleration = acceleration, laterEngines = laterEngines)
         )
     return choices
 
@@ -745,74 +315,140 @@ def designStage(symmetry, numBaseTowers, deltaV, payload, altitude,
 # Output the number and type of engines, and the
 # number of tons of propellant at each stage.
 
+class rawBurn(object):
+    def __init__(self, name, deltaV, accel, payload, altitude = None, planet = None):
+        self.name = name
+        self.deltaV = deltaV
+        self.acceleration = accel
+        self.payload = payload
+        if planet is None or altitude is None:
+            self.altitude = None
+            self.planet = None
+        else:
+            self.altitude = altitude
+            self.planet = planet
+
+    def __str__(self):
+        return ("raw burn %s: %g m/s at %g m/s^2, payload %g%s"
+            % (self.name, self.deltaV, self.acceleration, self.payload,
+               ("%g m above %s" % (self.altitude, self.planet))
+                    if self.planet else " in space"))
+
+class deepSpaceBurn(object):
+    def __init__(self, name, deltaV, accel = 1, payload = 0):
+        self.name = name
+        self.deltaV = deltaV
+        self.acceleration = accel # m/s
+        self.payload = payload
+
+    def convert(self, n):
+        """
+        Return a list of up to n raw burns corresponding to this burn.
+        """
+        burns = []
+        if n > 1:
+            for i in range(n-1):
+                burns.append(
+                    rawBurn(self.name, self.deltaV / n, self.acceleration, 0)
+                )
+        burns.append(rawBurn(self.name, self.deltaV / n, self.acceleration,
+                    self.payload))
+        return burns
+
+class liftoffBurn(object):
+    def __init__(self, name, planet, orbit,
+            acceleration = None, initialAltitude = 0, initialVelocity = None,
+            payload = 0):
+        """
+        Define a sequence of burns for a given planet, one per altitude.
+        orbit (m): the height of the orbit to achieve.  The orbit is
+            circular, equatorial, and in the same direction as sidereal
+            rotation.
+        planet: by default Kerbin, other planets can be specified.
+        acceleration: if specified, we ask the ascent module to assume this is
+            the acceleration that will be used.  Otherwise, we let the ascent
+            module use its default.
+        initialAltitude: the ascent will start at this altitude.
+        initialVelocity: this is an initial velocity vector that will magically
+            happen; it applies to the velocity at the first altitude.  If a
+            number, it is assumed to be vertical velocity.  If a 2-vector, it
+            is relative to the surface tangent.
+        payload (tonnes): The payload is extra payload that will stay in the
+            given orbit, beyond whatever further burns are required.
+        """
+        self.name = name
+        self.payload = payload
+        self.planet = planet
+        self.slope = ascent.climbSlope(planet, orbit,
+            initialAltitude = initialAltitude,
+            initialVelocity = initialVelocity,
+            acceleration = acceleration)
+        self.deltaV = self.slope.deltaV()
+        if acceleration is not None:
+            self.acceleration = acceleration
+        else:
+            # TODO: really we need acceleration to be by a given deltaV,
+            # since the required acceleration changes over the climb (more
+            # early and when the atmosphere starts to thin, less in between).
+            self.acceleration = max(x.thrust for x in self.slope._climbSlope)
+
+
+    def convert(self, n):
+        """
+        Return this burn split into n stages, bottom first.
+        """
+        # TODO: take account of Isp varying over pressure: instead of
+        # splitting by equal deltaV we should split by equal Isp.
+        burns = []
+        accel = max(x.thrust for x in self.slope._climbSlope)
+        if n > 1:
+            for i in range(n-1):
+                altitude = self.slope.altitudeAtDeltaV(self.deltaV * i / n, None)
+                burns.append(
+                    rawBurn(self.name, self.deltaV / n, accel, 0,
+                        planet = self.planet, altitude = altitude)
+                )
+        lastAltitude = self.slope.altitudeAtDeltaV(self.deltaV * (n-1) / n, None)
+        burns.append(rawBurn(self.name, self.deltaV / n, accel,
+                    planet = self.planet, altitude = lastAltitude,
+                    payload = self.payload))
+        return burns
+
+
+
+
+
 class burnProfile(object):
     """
     Represent a set of burns to be done:
     * The number of burns.
     * The deltaV of each burn.
-    * The altitude we'll be at for each burn.
-    * The requirements (time or acceleration) for each part of the burns.
+    * If the burn is atmospheric, the altitude and the planet.
+    * The acceleration requirement for each part of the burns.
     * Payload each stage must carry (in addition to carrying the next stage).
     * To help the search, the best Isp available at each altitude.
 
-    The burns come in order from top stage down.
-
-    Use burnRequirements, deltaV, and altitude.
+    The burns come in order from top stage down, and are items with a
+    convert(n) function that converts to a rawBurn.
     """
-    def __init__(self, burns, startAltitude = 0):
-        # Important: store everything as tuples, not lists, because we need to
-        # hash.
-        burnRequirements = tuple(
-            burnRequirement(acceleration = b.accel) for b in burns
-        )
-        deltaV  = tuple( b.deltaV for b in burns )
-        payload = tuple( b.payload for b in burns )
-
-        # Figure out the altitude -- but from the bottom up, not the top down.
-        # We therefore need to reverse twice to get things back the way they
-        # need to be.
-        altitude = []
-        lastDV = kerbin.optimalDeltaV(startAltitude)
-        for dV in reversed(deltaV):
-            altitude.append(kerbin.optimalAltitude(lastDV))
-            lastDV = lastDV + dV
-        altitude = tuple(reversed(altitude))
-
-        # For each altitude, figure out what is the best Isp we can possible
-        # achieve.
-        maxIspEngine = [
-            max(g_engines, key = lambda x: x.Isp(alt)) for alt in altitude
-        ]
-        maxIsp = tuple( x.Isp(alt) for (x, alt) in zip(maxIspEngine, altitude) )
-
-        self.startAltitude = startAltitude
-        self.deltaV           = deltaV
-        self.altitude         = altitude
-        self.burnRequirements = burnRequirements
-        self.payload          = payload
-        self.maxIsp           = maxIsp
-        print ("Created new profile %s" % self)
-        assert len(deltaV) > 0
-        assert len(deltaV) == len(altitude) == len(burnRequirements) == len(payload) == len(maxIsp)
-
-    def __hash__(self):
-        return hash( (self.startAltitude, self.deltaV, self.burnRequirements, self.payload) )
-
-    def __eq__(self, other):
-        return (self.deltaV == other.deltaV
-            and self.burnRequirements == other.burnRequirements
-            and self.payloads == other.payloads
-            and self.startAltitude == other.startAltitude)
+    def __init__(self, rawburns):
+        self.rawburns = tuple(rawburns)
+        self.maxIsp = tuple( engine.maxIsp(b.planet, b.altitude if b.planet else None)
+                for b in rawburns )
 
     def __str__(self):
-        # Not really intended for human consumption.
-        prologue = ("%d stages" % len(self.deltaV))
-        stages = [
-            ("deltaV %d, altitude %s, require %s, %g payload, Isp is at best %d" % stage)
-            for (stage) in zip(self.deltaV, self.altitude,
-                    self.burnRequirements, self.payload, self.maxIsp) ]
-        stages.insert(0, prologue)
-        return "\n\t".join(stages)
+        # Intended just for debugging...
+        prologue = ("%d burns" % len(self.rawburns))
+        burnstrs = [
+            ("deltaV %d, %s, require %s m/s, %g payload, Isp is at best %d" %
+                (b.deltaV,
+                ("%gm altitude on %s" % (b.altitude, b.planet)
+                    if b.planet else "in space"),
+                b.acceleration, b.payload, isp))
+            for (b, isp) in zip(self.rawburns, self.maxIsp)
+        ]
+        burnstrs.insert(0, prologue)
+        return "\n\t".join(burnstrs)
 
 
 class partialSolution(object):
@@ -826,7 +462,7 @@ class partialSolution(object):
         self.stages   = stages
         self.symmetry = symmetry
         self.numBaseTowers = numBaseTowers
-        self.complete = profile is None or (len(stages) == len(profile.deltaV))
+        self.complete = profile is None or (len(stages) == len(profile.rawburns))
         if symmetry is None or numBaseTowers is None:
             assert self.complete
             assert stages
@@ -841,10 +477,23 @@ class partialSolution(object):
             allEngines = stage.collectUsableEngines(stages)
 
             # For all lower stages, lower-bound the mass they will need.
-            for i in xrange(len(stages), len(profile.deltaV)):
-                (bestMass, allEngines) = self._lowerBound(
-                    decouplers, numTowers, allEngines, bestMass, i)
-            self.bestMass = bestMass
+            try:
+                for i in xrange(len(stages), len(profile.rawburns)):
+                    (bestMass, allEngines) = self._lowerBound(
+                        decouplers, numTowers, allEngines, bestMass, i)
+                self.bestMass = bestMass
+            except engine.WeakEngineException:
+                # Totally impossible even with the best engines.  Set this to
+                # basically infinite lower bound.
+                self.bestMass = 1e30
+
+    def __lt__(self, other):
+        if other is None:
+            return True
+        elif isinstance(other, Number):
+            return self.bestMass < other
+        else:
+            return self.bestMass < other.bestMass
 
     def remainingStages(self):
         if self.complete:
@@ -852,7 +501,7 @@ class partialSolution(object):
             # code would fail.
             return 0
         else:
-            return len(self.profile.deltaV) - len(self.stages)
+            return len(self.profile.rawburns) - len(self.stages)
 
     def _lowerBound(self, decouplers, numTowers, allEngines, mass, i):
         """
@@ -862,10 +511,11 @@ class partialSolution(object):
         Improving the heuristic has a huge effect on runtime and memory
         use.
         """
-        deltaV = self.profile.deltaV[i]
-        Isp    = self.profile.maxIsp[i]
-        req    = self.profile.burnRequirements[i]
-        payload= self.profile.payload[i]
+        b          = self.profile.rawburns[i]
+        deltaV     = b.deltaV
+        Isp        = self.profile.maxIsp[i]
+        accel      = b.acceleration
+        payload    = b.payload
         allEngines = dict(allEngines)
 
         # We will need decouplers and other struts.
@@ -879,32 +529,23 @@ class partialSolution(object):
             # 1. Check how much propellant we need, assuming the best
             #    possible Isp.
             # 2. Check how much thrust we need to push that propellant.
-            # 3. Use the lightest engines to achieve it, if we don't
-            #    already.
-            # 4.
+            # 3. Use the lightest engines to achieve it, which adds mass.
+            # 4. goto 1.
 
             # Assuming we achieve the best possible Isp for the given altitude,
             # compute the propellant use.  Don't add it yet!
-            (bestProp, bestTank) = burnMass(deltaV, Isp, mass)
+            (bestProp, bestTank) = engine.burnMass(deltaV, Isp, mass)
 
             # We are stuck using integer tonnage.  We might actually need more,
             # if we asparagus-stage.  But we might not, if we don't.
             # TODO: try both cases, take the better one.
             bestProp = math.ceil(bestProp)
-            bestTank = bestProp / beta
+            bestTank = bestProp / engine.beta
 
             # Check how much thrust we need to push that mass.
             dryMass = mass + bestTank
             wetMass = mass + bestTank + bestProp
-            if not req.burnTime: minTimeThrust = 0
-            else:
-                minTimeThrust = minThrustForBurnTime(deltaV, Isp,
-                    dryMass, req.burnTime)
-            if not req.acceleration: minAccelThrust = 0
-            else:
-                # F = ma
-                minAccelThrust = wetMass * req.acceleration
-            minThrust = max(minTimeThrust, minAccelThrust)
+            minThrust = wetMass * accel
             # How much additional thrust do we need?
             curThrust = sum(e.thrust * n for (e, n) in allEngines.iteritems())
             if curThrust >= minThrust:
@@ -915,14 +556,14 @@ class partialSolution(object):
                 # Use the lightest possible engine.  It has worse Isp than
                 # assumed; no matter, we're lower bounding.
                 needThrust = minThrust - curThrust
-                (engine, n) = lightestEngineForThrust(needThrust)
-                if engine in allEngines:
-                    allEngines[engine] += n
+                (e, n) = engine.lightestEngineForThrust(needThrust)
+                if e in allEngines:
+                    allEngines[e] += n
                 else:
-                    allEngines[engine] = n
+                    allEngines[e] = n
                 # Add in the mass, and iterate -- we'll need more
                 # propellant now.
-                mass += n * engine.mass
+                mass += n * e.mass
 
         # We got the engine mass all set up.  Now add in the final
         # propellant mass.
@@ -930,13 +571,6 @@ class partialSolution(object):
         mass += bestTank
 
         return (mass, allEngines)
-
-
-
-    def __lt__(self, other):
-        if other is None: return True
-        elif isinstance(other, Number): return self.bestMass < other
-        else: return self.bestMass < other.bestMass
 
     def extend(self):
         """
@@ -946,31 +580,34 @@ class partialSolution(object):
         assert not self.complete
         # i is the next burn to do
         i = len(self.stages)
-        assert i < len(self.profile.deltaV)
+        assert i < len(self.profile.rawburns)
+        b = self.profile.rawburns[i]
+        engines = stage.collectUsableEngines(self.stages)
         options = designStage(self.symmetry, self.numBaseTowers,
-            self.profile.deltaV[i],
-            self.currentMass + self.profile.payload[i],
-            self.profile.altitude[i],
-            burnRequirement = self.profile.burnRequirements[i],
-            laterStages = self.stages) # asparagus staging
+            b.deltaV, self.currentMass + b.payload, b.altitude, b.planet,
+            acceleration = b.acceleration,
+            laterEngines = engines) # asparagus staging
         options.extend( designStage(self.symmetry, self.numBaseTowers,
-            self.profile.deltaV[i],
-            self.currentMass + self.profile.payload[i],
-            self.profile.altitude[i],
-            burnRequirement = self.profile.burnRequirements[i],
-            laterStages = nil) # standard staging
-        )
+            b.deltaV, self.currentMass + b.payload, b.altitude, b.planet,
+            acceleration = b.acceleration,
+            laterEngines = dict()) )# standard staging: no later engines for use
         list.sort(options, key = lambda x: x.fullMass) # critical!
         solutions = []
-        for stage in options:
-            nextstages = cons(stage, self.stages)
+        for s in options:
+            nextstages = cons(s, self.stages)
             partial = partialSolution(self.profile, nextstages,
                         self.symmetry, self.numBaseTowers)
             solutions.append(partial)
         return solutions
 
     def __str__(self):
-        return "\n".join( "\t" + str(s) for s in self.stages )
+        strs = []
+        if self.complete:
+            strs.append("Complete candidate with mass %g, %d stages" % (self.bestMass, len(self.stages)))
+        else:
+            strs.append("Partial candidate with mass %g, %d stages" % (self.bestMass, len(self.stages)))
+        strs.extend( "\t" + str(s) for s in self.stages )
+        return "\n".join(strs)
 
 
 def designRocket(profiles, massToBeat = None,
@@ -988,7 +625,7 @@ def designRocket(profiles, massToBeat = None,
     # Should we prune?  If the best known is an actual solution, we want pursue
     # a candidate if it might reduce the mass by at least 1%.  Less reduction,
     # we don't really care.
-
+    improvementRatio = 1
     def shouldKeep(candidate):
         if isinstance(bestKnown, partialSolution):
             if candidate.bestMass <= improvementRatio * bestKnown.bestMass:
@@ -1002,7 +639,8 @@ def designRocket(profiles, massToBeat = None,
         Return None if the greedy solution got pruned, or no solution exists.
         """
         while not partial.complete:
-            if not shouldKeep(partial): return
+            if not shouldKeep(partial):
+                return
             children = partial.extend()
             if not children: return
             partial = children[0]
@@ -1184,34 +822,25 @@ def designRocket(profiles, massToBeat = None,
 # In practice, splitting in 500m/s seems to just take too long on large
 # missions and not actually improve much on small missions.
 #
-def splitBurns(burns):
+def splitBurns(burns, minStageDeltaV):
     profiles = []
-    # subburns are burn instances, but stored in a cons list, so they're in
+    # subburns are rawburn instances, but stored in a cons list, so they're in
     # top-first order rather than bottom-first.  This is conveniently how all
     # the internal code wants it.
     def recur(subburns, burnIdx):
         if burnIdx == len(burns):
             # Base case:
             # convert the subburns to a complete burn profile
-            profile = burnProfile(subburns,
-                startAltitude = startAltitude)
+            profile = burnProfile(subburns)
             profiles.append(profile)
         else:
             # Inductive case: for every split of burn i, recur.
             b = burns[burnIdx]
             maxstages = int(math.ceil(b.deltaV / minStageDeltaV)) # max number of splits
             for nstages in xrange(1, maxstages+1):
-                # Recur with nstages stages.
                 mysubburns = subburns
-                dV = b.deltaV / nstages
-                # Add n-1 of the burns, then the last sub-burn has the payload.
-                if nstages > 1:
-                    for i in xrange(nstages - 1):
-                        subname = ("%s [%d]" % (b.name, i))
-                        mysubburns = cons(burn(dV, b.accel, subname), mysubburns)
-                i = nstages - 1
-                subname = ("%s [%d]" % (b.name, i))
-                mysubburns = cons(burn(dV, b.accel, subname, b.payload), mysubburns)
+                for subb in b.convert(nstages):
+                    mysubburns = cons(subb, mysubburns)
                 recur(mysubburns, burnIdx + 1)
 
     recur(nil, 0)
@@ -1219,13 +848,14 @@ def splitBurns(burns):
 
 # Local search trick, and pretty printing.
 class analyst(object):
-    def __init__(self, burns):
+    def __init__(self, burns, minStageDeltaV):
         """
         Set up, relative to the *original* burns that the user wants.
         Said burns are ordered bottom up.
         """
         self.burns = burns
         self.totalDeltaV = sum(b.deltaV for b in self.burns)
+        self.minStageDeltaV = minStageDeltaV
 
     class stageData(object):
         def __init__(self, burnIds, dumpDV, payload):
@@ -1292,7 +922,7 @@ class analyst(object):
             mustDump = False
             payload = 0
             while burnIdx < len(self.burns) and dV > 0:
-                if s.acceleration() < b.accel:
+                if s.acceleration() < b.acceleration:
                     # We have dV left over, but we don't accelerate enough.
                     # TODO: actually the acceleration improves over time,
                     # so it might be enough now even though it wasn't at the
@@ -1338,39 +968,90 @@ class analyst(object):
         revAnalysis = tuple(reversed(analysis))
         (lastStage, lastData) = (revStages[0], revAnalysis[0])
         newStages = nil
-        for (s, d) in zip(revStages, revAnalysis):
-            payload = d.payload + (newStages.head.fullMass if newStages else 0)
 
-            if not d.burnIds:
-                # This is a completely wasted stage.  Rebuild it with no fuel.
-                # TODO: merge with the stage below if it has the same engine,
-                # or no engine, or if we have no engine.
-                newS = stage(0, payload, s.engineType, s.numEngines,
-                    newStages if s.asparagus else None, s.numTowers, s.altitude)
-            else:
+
+        def rebuildStage(deltaV, payload, oldStage, laterEngines):
+            """
+            Copy the old stage, but change its target deltaV and payload.
+            """
+            if not oldStage.asparagus:
+                laterEngines = None
+
+            try:
+                newS = stage(deltaV, payload,
+                    oldStage.engineType, oldStage.numEngines, laterEngines,
+                    oldStage.numTowers, oldStage.planet, oldStage.altitude)
+            except engine.WeakEngineException:
+                # This implies roundoff error, since we didn't change the engines.
+                newS = None
+            if newS.propellantMass > oldStage.propellantMass:
+                # This implies roundoff, since we reduced the mass above.
+                newS = None
+            if not newS:
+                # I was hoping we'd get the same deltaV with less
+                # propellant, but roundoff bit me; just use the same
+                # propellant as before.
+                newS = stage(deltaV, payload,
+                    oldStage.engineType, oldStage.numEngines, laterEngines,
+                    oldStage.numTowers, oldStage.planet, oldStage.altitude,
+                    propMassOverride = (s.propellantMass, s.tankMass))
+            return newS
+
+        # Rebuilding all the stages:
+        # We start at the top and go down.
+        for (revStageIdx, (s, d)) in enumerate(zip(revStages, revAnalysis)):
+            laterEngines = stage.collectUsableEngines(newStages)
+            payload = (newStages.head.fullMass if newStages else 0)
+
+            if d.burnIds:
                 # This stage is useful.  However, its mass may be reduced by
                 # taking less propellant along.  Cruise stages just before
                 # a descent or ascent stage typically have some slop.  Even if
                 # there's no slop, stages above might now be lighter.
                 targetDeltaV = s.achievedDeltaV() - d.dumpDV
-                try:
-                    newS = stage(targetDeltaV, payload, s.engineType, s.numEngines,
-                        newStages if s.asparagus else None, s.numTowers, s.altitude)
-                except WeakEngineException:
-                    # This implies roundoff error, since we didn't change the engines.
-                    newS = None
-                if newS.propellantMass > s.propellantMass:
-                    # This implies roundoff, since we reduced the mass above.
-                    newS = None
-                if not newS:
-                    # I was hoping we'd get the same deltaV with less
-                    # propellant, but roundoff bit me; just use the same
-                    # propellant as before.
-                    newS = stage(targetDeltaV, payload, s.engineType, s.numEngines,
-                        newStages if s.asparagus else None, s.numTowers, s.altitude,
-                        propMassOverride = (s.propellantMass, s.tankMass))
+                payload = d.payload + (newStages.head.fullMass if newStages else 0)
+                laterEngines = stage.collectUsableEngines(newStages)
 
-            newStages = cons(newS, newStages)
+                newS = rebuildStage(targetDeltaV, payload, s, laterEngines)
+                newStages = cons(newS, newStages)
+            else:
+                # Completely wasted stage.  Do we actually need the thrust for
+                # lower stages?
+                # For each lower stage, if it's asparagus with us, it might
+                # need our thrust.
+                # Check the acceleration without the mass or thrust of our
+                # engines and fuel.  If that's not sufficient for the burns it
+                # participates in, then we need our thrust (but not the fuel).
+                # Things are slightly better in reality: we reduce our mass, so
+                # lower stages can reduce theirs too!  So we could do better
+                # than this estimate.
+                thrust = s.engineType.thrust * s.numEngines
+                vthrust = s.engineType.thrust * s.numEngines if s.engineType.vectoring else 0
+                stageMassDiff = s.fullMass - s.payload
+                def canIgnoreStage():
+                    for (lowerStage, lowerData) in zip(revStages[revStageIdx+1:], revAnalysis[revStageIdx:]):
+                        if not lowerStage.asparagus: break
+
+                        massNoStage = lowerStage.fullMass - stageMassDiff
+                        thrustNoStage = lowerStage.thrust - thrust
+                        vthrustNoStage = lowerStage.vectoringThrust - vthrust
+                        if vthrustNoStage < 0.25 * thrustNoStage:
+                            return False # not enough vectoring thrust without the stage
+                        for bId in lowerData.burnIds:
+                            accel = self.burns[bId].acceleration
+                            if thrustNoStage < massNoStage * accel:
+                                return False # not enough thrust:mass ratio without the stage
+                    return True # no reason it can't work => it works!
+                if canIgnoreStage():
+                    # Yay, we ditched the fuel *and* the engines *and* the decouplers!
+                    continue
+                else:
+                    # Make a 0-deltaV stage with just the engines instead.
+                    # It's too much trouble for too little improvement to merge
+                    # engines with the next stage below.
+                    zeroStage = rebuildStage(0, payload, s, laterEngines)
+                    newStages = cons(zeroStage, newStages)
+
 
         if newStages.head.fullMass < stages.head.fullMass:
             print ("Locally improved from %g T to %g T" %
@@ -1405,6 +1086,7 @@ class analyst(object):
           wasted deltaV (which is typically at the end, or just before a
           descent/ascent stage).
 
+        TODO: reinstate these!
         * From the bottom up, look at each stage.  Produce a new profile
           that asks for the deltaV the stages provide, up to the total
           deltaV, and the max acceleration of any burn affected by this
@@ -1426,70 +1108,64 @@ class analyst(object):
             improved = self._locallyImprove(stages, analysis)
 
 
-        def makeProfile(deltaVs):
-            """
-            Return a burn profile that corresponds to achieving the given
-            deltaVs, and matching up with acceleration requirements.
-            """
-            def makeBurn(deltaV, (fullBurns, partialBurn)):
-                if partialBurn:
-                    allBurns = [ b for b in fullBurns ]
-                    allBurns.append(partialBurn)
-                else:
-                    allBurns = fullBurns
-                assert len(allBurns) > 0
-
-                # TODO: this is pessimistic.  Our acceleration will increase
-                # over the stage.  However, we have no way to convey such
-                # fine-grained information in the profile being optimized.
-                accel = max( b.accel for b in allBurns )
-
-                if len(allBurns) == 1:
-                    name = allBurns[0].name
-                else:
-                    name = ",".join(b.name for b in allBurns)
-
-                # Payloads that we have to lift, not counting later stages.
-                # We don't care about the partial burn, which a later stage
-                # will handle.
-                payload = sum( b.payload for b in fullBurns ) if fullBurns else 0
-
-                return burn(deltaV, accel, name, payload)
-
-            # The deltaVs and burnsByStage are bottom-up, we need the burns top-down.
-            burnsByStage = self._deltaVMap(deltaVs)
-            newburns = [  makeBurn(*x) for x in reversed(zip(deltaVs, burnsByStage)) ]
-            assert len(newburns) > 0
-            return burnProfile(newburns, startAltitude = startAltitude)
-
-        # reverse the stages (painful)
-        revStages = tuple(reversed(tuple(stages)))
-
-        # suggest deltaV lists in both directions
-        deltaVsUp = self._suggestDeltaVs(stages)
-        deltaVsDown = tuple(reversed(self._suggestDeltaVs(revStages)))
-
+#        def makeProfile(deltaVs):
+#            """
+#            Return a burn profile that corresponds to achieving the given
+#            deltaVs, and matching up with acceleration requirements.
+#            """
+#            def makeBurn(deltaV, (fullBurns, partialBurn)):
+#                if partialBurn:
+#                    allBurns = [ b for b in fullBurns ]
+#                    allBurns.append(partialBurn)
+#                else:
+#                    allBurns = fullBurns
+#                assert len(allBurns) > 0
+#
+#                # TODO: this is pessimistic.  Our acceleration will increase
+#                # over the stage.  However, we have no way to convey such
+#                # fine-grained information in the profile being optimized.
+#                accel = max( b.accel for b in allBurns )
+#
+#                if len(allBurns) == 1:
+#                    name = allBurns[0].name
+#                else:
+#                    name = ",".join(b.name for b in allBurns)
+#
+#                # Payloads that we have to lift, not counting later stages.
+#                # We don't care about the partial burn, which a later stage
+#                # will handle.
+#                payload = sum( b.payload for b in fullBurns ) if fullBurns else 0
+#
+#                return burn(deltaV, accel, name, payload)
+#
+#            # The deltaVs and burnsByStage are bottom-up, we need the burns top-down.
+#            burnsByStage = self._deltaVMap(deltaVs)
+#            newburns = [  makeBurn(*x) for x in reversed(zip(deltaVs, burnsByStage)) ]
+#            assert len(newburns) > 0
+#            return burnProfile(newburns, startAltitude = startAltitude)
+#
+#        # reverse the stages (painful)
+#        revStages = tuple(reversed(tuple(stages)))
+#
+#        # suggest deltaV lists in both directions
+#        deltaVsUp = self._suggestDeltaVs(stages)
+#        deltaVsDown = tuple(reversed(self._suggestDeltaVs(revStages)))
+#
         # Return the improved set of stages (or the original set), and also
         # return the potentially better profiles to search.
-        return ( stages, ( makeProfile(deltaVsUp), makeProfile(deltaVsDown) ) )
+        return ( stages, [] ) #( makeProfile(deltaVsUp), makeProfile(deltaVsDown) ) )
 
 
     def prettyPrint(self, stages, data):
         m0 = self.burns[-1].payload
         m1 = stages.head.fullMass
-        Isp = self.totalDeltaV / (g0 * math.log(m1 / m0)) # log is ln
+        Isp = self.totalDeltaV / (physics.g0 * math.log(m1 / m0)) # log is ln
         print ("Solution in %d stages:" % (len(stages),))
         print ("  Final payload: %g T" % m0)
         print ("  Launch mass:   %g T" % m1)
         print ("  Ratio:         %g" % (m1/m0))
         print ("  Implied Isp:   %g" % Isp)
         # TODO: we're not counting waste when we're forced to dump fuel.
-        if startAltitude == 0:
-            print ("  Start on Kerbin surface")
-        elif startAltitude is None:
-            print ("  Start in the vacuum")
-        else:
-            print ("  Start at %dm altitude" % startAltitude)
 
         for (sIdx, (s, d)) in enumerate(zip(stages, data)):
             names = [ self.burns[burnId].name for burnId in d.burnIds ]
@@ -1510,20 +1186,41 @@ class analyst(object):
                 print ("\t* includes %g T payload" % d.payload)
 
 
-startDeltaV = kerbin.optimalDeltaV(startAltitude)
-atmosphericDeltaV = 4700 - startDeltaV
-if atmosphericDeltaV > 0:
-    burns.insert( 0, burn(atmosphericDeltaV, 2.2*g0, "Kerbin launch") )
+def design(burns, minStageDeltaV = 750, symmetry = 2, numBaseTowers = 1):
+    """
+    Design a rocket to perform the given burns, instances of liftoffBurn and
+    deepSpaceBurn.  Prints to stdout.
 
-profiles = splitBurns(burns)
+    symmetries details the symmetry required.  By default, we try 2-way symmetry.
 
-# Design the rocket!
-shrink = analyst(burns)
-soln = designRocket(profiles,
-            massToBeat = None, analyst = shrink, symmetries = symmetry,
-            numBaseTowers = numBaseTowers)
-if soln:
-    data = shrink.analyze(soln)
-    shrink.prettyPrint(soln, data)
-else:
-    print "You will not be going to space today."
+    numBaseTowers says how many towers we can start with.  By default, we try 1 tower.
+        Increase this if you want to stick the rocket around the sides of your payload,
+        rather than under it.
+
+    minStageDeltaV gives a limit to how much splitting to perform: we will split
+        any stage with more than 750 m/s dV into a variety of numbers of
+        smaller stages.
+        It is probably a bad algorithm...
+    """
+    print ("Designing for burns totalling %g m/s, payload total %g T" %
+        (sum(b.deltaV for b in burns),
+         sum(b.payload for b in burns)))
+    profiles = splitBurns(burns, minStageDeltaV)
+    print ("%g Profiles:" % (len(profiles)))
+    for p in profiles:
+        print str(p)
+    shrink = analyst(burns, minStageDeltaV)
+
+    # This code takes a long, long time...  Hit C-c at the shell to stop it and
+    # return the best yet.
+    soln = designRocket(profiles,
+                massToBeat = None,
+                analyst = shrink,
+                symmetries = symmetry,
+                numBaseTowers = numBaseTowers)
+
+    if soln:
+        data = shrink.analyze(soln)
+        shrink.prettyPrint(soln, data)
+    else:
+        print "You will not be going to space today."

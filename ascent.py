@@ -45,6 +45,7 @@ class climbSlope(object):
         targetVelocity = None,
         initialAltitude = 0,
         initialVelocity = None,
+        launchInclination = 0,
         acceleration = None,
         timestep = 1):
         """
@@ -116,6 +117,7 @@ class climbSlope(object):
                     ))
 
         self.planet = planet
+        self.launchInclination = launchInclination # used to estimate circularization
 
         if initialVelocity is None:
             v = [0,0]
@@ -140,7 +142,6 @@ class climbSlope(object):
         if orbitAltitude is None:
             orbitAltitude = TOA + 1000
         self.orbitAltitude = orbitAltitude
-        g_orbit = planet.gravity(orbitAltitude)
         v_orbit = planet.orbitalVelocity(orbitAltitude)
 
         if gravityTurnStart is None:
@@ -366,7 +367,8 @@ class climbSlope(object):
         """
         deltaV we spent up and including the given altitude
         At 0 meters, we include the cost of the first second of burn.
-        Invalid to call for altitudes above apoapsis.
+
+        Raises a KeyError if the query is outside the range we simulated.
         """
         return self._interpolate("altitude", altitude, "deltaV")
 
@@ -375,11 +377,20 @@ class climbSlope(object):
         Tally up how much total deltaV required to get to orbit.
         - deltaV we spent up to apoapsis
         - deltaV we need in order to circularize
+        - take account of sidereal rotation depending on the launch angle
         """
         v_orbit = self.planet.orbitalVelocity(self.orbitAltitude)
         v_last = L2(self._climbSlope[-1].velocity)
+        v_last += cos(self.launchInclination) * self.planet.siderealRotationSpeed
         dV_circ = v_orbit - v_last
         return self._climbSlope[-1].deltaV + dV_circ
+
+    def deltaVBetween(self, altitude0, altitude1):
+        """
+        Return the deltaV to transition between altitude 0 and altitude 1
+        along the climb slope.
+        """
+        return self.deltaVToAltitude(altitude1) - self.deltaVToAltitude(altitude0)
 
     def dragLosses(self):
         """
@@ -388,14 +399,23 @@ class climbSlope(object):
         """
         return self._climbSlope[-1].dragLoss
 
-    def altitudeAtDeltaV(self, deltaV):
+    def altitudeAtDeltaV(self, deltaV, default = KeyError):
         """
         Return the altitude after a given amount of deltaV.
-        Invalid to call for altitudes above apoapsis.
+
+        Raises a KeyError if the query is outside the range we simulated
+        (i.e. it corresponds to deltaV that exceeds what we spent to get to
+        apoapsis).
         """
         if deltaV <= self._climbSlope[0].deltaV:
             return self._climbSlope[0].altitude
-        return self._interpolate("deltaV", deltaV, "altitude")
+        try:
+            return self._interpolate("deltaV", deltaV, "altitude")
+        except KeyError:
+            if default == KeyError:
+                raise
+            else:
+                return default
 
     def __str__(self):
         return "\n".join( (str(p) for p in self._climbSlope) )
