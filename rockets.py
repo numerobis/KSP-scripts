@@ -1,3 +1,18 @@
+# KSP Rocket design optimizer.
+# Copyright 2012 Benoit Hudson
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 from __future__ import division # / means float div always
 
 import math
@@ -8,6 +23,17 @@ from LinkedList import LinkedList, cons, nil
 import ascent
 import engine
 import physics
+
+"""
+This module is a work in progress aimed at automatically designing low-mass
+rockets.
+
+We use a branch-and-bound search of a vast landscape for a given fixed set of
+stages, deciding how many and what kind of engines to use on each stage, and
+deciding how much propellant to bring along.  The search is not optimal -- there
+are too many choices, so we cut down the possibilities -- but does, slowly,
+produce decent rockets.
+"""
 
 ##############################
 #

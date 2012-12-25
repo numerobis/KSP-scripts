@@ -1,10 +1,26 @@
+# KSP Physics basics.
+# Copyright 2012 Benoit Hudson
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
 """
-Fundamental constants in the KSP universe (at least in 0.18.1)
+Fundamental constants in the KSP universe (at least in 0.18.1), and various math bits.
 """
 import math
 
 # Standard gravity.
-g0 = 9.80665
+g0 = 9.81 # closer to 9.8065 in the SI world.
 
 def quadratic(a, b, c):
     """
@@ -19,6 +35,3 @@ def quadratic(a, b, c):
 
 def L2(vector):
     return math.sqrt(sum(x*x for x in vector))
-
-def L2_2(vector):
-    return sum(x*x for x in vector)

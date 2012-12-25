@@ -1,3 +1,18 @@
+# KSP Engine descriptions.
+# Copyright 2012 Benoit Hudson
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 from __future__ import division
 import math
 
@@ -7,6 +22,8 @@ from physics import g0
 This module encodes information about the engines available in KSP.
 
 It also includes some functions related to the ideal rocket equation.
+
+TODO: read this from the part.cfg files.
 """
 
 
@@ -51,8 +68,8 @@ class engine(object):
         return self.name
 
 # We have a none engine for fuel-only stages in asparagus staging.  It has no
-# mass, no thrust, Isp doesn't matter.  Make it radial, so that we can have
-# radial engines above and we needn't add towers.
+# mass, no thrust, Isp doesn't matter.  Make it radial, so that the optimizer
+# can allow putting engines directly below this stage.
 noEngine = engine("none", 0, 0, 0, 0, radial=True)
 
 types = (
@@ -73,22 +90,28 @@ types = (
     engine("24-77",     250, 300,    0.09,     20, vectoring=True, radial=True),
     engine("LV-1",      220, 290,    0.03,      1.5),
 
-    # The ion engine is a bit off: we need a *lot* of power for it,
-    # which starts to add more mass than just the 0.25.  Also, the
-    # dry mass is much more than 1/4 of the propellant, and the number
-    # of containers starts to matter.  So just ignore it.
-    #engine("ion",      4200,4200,    0.25,      0.5),
+    # TODO: we need a *lot* of power for the ion engine, which starts to add
+    # more mass than just the 0.25.  Also, the dry mass is much more than 1/4
+    # of the propellant, and the number of containers starts to matter.  So,
+    # for now, just ignore it.
+    # engine("ion",      4200,4200,    0.25,      0.5),
 
-    # Note: solid-fuel rockets aren't handled correctly yet.
+    # TODO: solid-fuel rockets aren't handled correctly yet with respect to fuel
+    # calculations.
     # engine("Sepratron", 100,    0.15,     20, solid=9),
     # engine("RT-10",     240,    0.5,     250, solid=433),
     # engine("BACC",      250,    1.75,    300, solid=850),
 )
+_engineDict = dict((e.name.lower(), e) for e in types)
+def getEngine(name):
+    return _engineDict[name.lower()]
+
 
 # To help the heuristics, choose the best possible Isp at a given altitude.
 def maxIsp(planet, altitude):
     ispMaxEngine = max(types, key = lambda x: x.Isp(planet, altitude))
     return ispMaxEngine.Isp(planet, altitude)
+
 
 # To help the heuristics, choose the best possible mass to achieve a given
 # thrust.
@@ -98,34 +121,6 @@ def lightestEngineForThrust(thrust):
     num = thrust / maxThrustPerMassEngine.thrust
     return (maxThrustPerMassEngine, num)
 
-
-
-
-##############################
-## Available tanks
-
-#class tank(object):
-#    def __init__(self, name, drymass, liquid, oxidizer):
-#        """
-#        Liquid and oxidizer in 5kg units (!?); drymass in tonnes.
-#        """
-#        self.name = name
-#        self.drymass = drymass
-#        self.propellant = drymass + (liquid+oxidizer) * 0.005
-#        self.fullmass = drymass + self.propellant
-
-## Store the tanks sorted by capacity.  But only the big tanks; the two
-## small tanks I don't feel like handling.
-#tanks = [
-#    tank("Jumbo-64", 4, 2880, 3520),
-#    tank("X200-32", 2, 1440, 1760),
-#    tank("X200-16", 1, 720, 880),
-#    tank("FL-T800 or X200-8", 0.5, 360, 440),
-#    tank("FL-T400", 0.25, 180, 220),
-#    tank("FL-T200", 0.125, 90, 110),
-#    tank("Oscar-B", 0.015, 5.735, 7),
-#    tank("ROUND-8", 0.025, 10, 12.2),
-#]
 
 ##############################
 ## Tsiokolvsky rocket equation
@@ -147,11 +142,13 @@ def burnMass(deltaV, Isp, m0):
     """
     Return the mass of propellant and tanks that we'll need to burn.
 
-    assuming tanks hold 8 times their mass.  The assumption is false
+    Assume tanks hold beta times their mass.  The assumption is false
     for some of the smallest tanks.
 
-    Return None if it is impossible to achieve the deltaV with that given
-    Isp given the mass of the tanks.
+    Raise WeakEngineException if it is impossible to achieve the deltaV with
+    that given Isp.  While the ideal rocket equation allows arbitrary deltaV,
+    it doesn't take account of tank dry mass, which grows as propellant mass
+    grows.
 
     deltaV: m/s
     Isp: s
@@ -168,7 +165,6 @@ def burnMass(deltaV, Isp, m0):
     # Clearly, if (1-alpha+beta) <= 0 then we are in an impossible
     # state: this corresponds to needing infinite fuel.
     a = alpha(deltaV, Isp)
-    beta = 8 # TODO: handle the smaller, less efficient tanks too!
     if 1 - a + beta <= 0: raise WeakEngineException(Isp)
     tankMass = m0 * (a - 1) / (1 - a + beta)
     propMass = tankMass * beta
@@ -179,6 +175,8 @@ def burnTime(deltaV, Isp, thrust, m0):
     """
     Return the time needed to perform the burn.
     m0 is the dry mass including tanks.
+
+    Raise WeakEngineException if there is no thrust.
     """
     # If there's no deltaV, or no mass, we don't burn at all.
     if deltaV == 0 or m0 == 0: return 0
@@ -204,29 +202,40 @@ def minThrustForBurnTime(deltaV, Isp, m0, time):
 
 def combineIsp(engines, planet, altitude):
     """
-    Given a dictionary mapping engine -> count, compute the
-    Isp of the system at the given altitude.
+    Given a dictionary mapping engine -> count, or a list of pairs, compute the
+    Isp of the system at the given altitude on the given planet.  Pass in None
+    for the planet to get vacuum values.
 
     This is the weighted sum of the impulses of each type, with weights
-    based off the relative mass flow rate of the engines.
+    based off the relative mass flow rate of the engines.  Proving this
+    requires re-deriving the ideal rocket equation, but with two engines,
+    and generalizing in the obvious way.
     """
     def alpha(e, c):
         # no thrust => no contribution (even if Isp is zero)
         if c == 0 or e.thrust == 0: return 0
         else: return e.thrust * c / e.Isp(planet, altitude)
 
-    return (sum(e.thrust * c for (e,c) in engines.iteritems())
-        /   sum(alpha(e,c)   for (e,c) in engines.iteritems()))
+    try:
+        return (sum(e.thrust * c for (e,c) in engines.iteritems())
+            /   sum(alpha(e,c)   for (e,c) in engines.iteritems()))
+    except AttributeError:
+        return (sum(e.thrust * c for (e,c) in engines)
+            /   sum(alpha(e,c)   for (e,c) in engines))
 
-# combine 3x nuke and sail
-# print combineIsp( [(engines[1], 1), (engines[2], 3)] )
+
+# combine 2x nuke and 1x sail
+# print combineIsp( [(getEngine("mainsail"), 1), (getEngine("lv-n"), 2)], None, None)
 
 
 
 ###########################################################################
 ## Notes about experiments:
 ## I ran an experiment to see how Isp varied for the nuke as altitude
-## changes.  Here are the results:
+## changes.  Here are the results.
+# Explanation for the systematic error, in part, is that the altimeter measures
+# about 20m off from the engine -- below during launch on Kerbin, above while
+# crashing on Eve.
 
 # On Kerbin:
 # alt  |    IspExperiment   | IspCalculated | Error

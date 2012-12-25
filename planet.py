@@ -1,3 +1,18 @@
+# KSP Planets module
+# Copyright 2012 Benoit Hudson
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 from __future__ import division
 import math
 from math import sqrt, cos, sin, exp, log
@@ -191,4 +206,6 @@ eve    = planet("Eve",    8171730200000, 700,   54.6,  5,   7000)
 laythe = planet("Laythe", 1962000000000, 500,   59.3,  0.8, 4000)
 jool   = planet("Jool",     2.82528E+14, 600, 1047.2, 15,   9000)
 
-planets = dict([ (p.name, p) for p in (kerbin, eve, laythe, jool) ])
+_planets = dict([ (p.name.lower(), p) for p in (kerbin, eve, laythe, jool) ])
+def getPlanet(name):
+    return _planets[name.lower()]
