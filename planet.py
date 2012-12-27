@@ -146,7 +146,7 @@ class planet(object):
         altitude is in meters.
         """
 
-        # v = sqrt(g/ (alpha * gamma * e^{-altitude/beta}))
+        # v = sqrt(g/ (datumPressure * gamma * e^{-altitude/scale}))
         # Then pull the e term out, and remember that gravity changes
         # (slightly) with altitude.
         return exp(0.5 * altitude / self.scale) * sqrt(
