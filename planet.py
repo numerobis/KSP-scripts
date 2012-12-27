@@ -15,7 +15,7 @@
 
 from __future__ import division
 import math
-from math import sqrt, cos, sin, exp, log
+from math import sqrt, cos, sin, exp, log, pi
 
 from physics import g0, L2, quadratic
 
@@ -39,11 +39,13 @@ gamma = 0.5 * coefficientOfDrag * dragMultiplier * kerbinSurfaceDensity
 
 class planet(object):
 
-    def __init__(self, name, gravityParam, radiusKm, sidereal, datumPressure, scale):
+    def __init__(self, name, gravityParam, radiusKm, siderealPeriod, datumPressure, scale):
         self.name = name
         self.datumPressure = datumPressure # atm
         self.scale = scale      # m (pressure falls by e every scale altitude)
-        self.siderealRotationSpeed = sidereal # m/s
+        # Use siderealPeriod because those are more exact values
+	# 2 * pi * r = circumference, divide by period to get m/s
+        self.siderealRotationSpeed = 2 * pi * radiusKm * 1000 / siderealPeriod # m/s
         self.radius = radiusKm * 1000 # stored in m
         self.mu = gravityParam  # m^3/s^2
 
@@ -202,10 +204,10 @@ class planet(object):
         # log(1e6) ~ 13.81551...
         return self.scale * 13.81551
 
-kerbin = planet("Kerbin", 3531600000000, 600,  174.5,  1,   5000)
-eve    = planet("Eve",    8171730200000, 700,   54.6,  5,   7000)
-laythe = planet("Laythe", 1962000000000, 500,   59.3,  0.8, 4000)
-jool   = planet("Jool",     2.82528E+14, 600, 1047.2, 15,   9000)
+kerbin = planet("Kerbin", 3531600000000, 600, 21600,  1,   5000)
+eve    = planet("Eve",    8171730200000, 700, 80500,  5,   7000)
+laythe = planet("Laythe", 1962000000000, 500, 52980.8790593796,  0.8, 4000)
+jool   = planet("Jool",     2.82528E+14, 600, 36000, 15,   9000)
 
 _planets = dict([ (p.name.lower(), p) for p in (kerbin, eve, laythe, jool) ])
 def getPlanet(name):
