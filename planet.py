@@ -25,15 +25,16 @@ the KSP solar system.
 """
 
 # The drag model in KSP 0.18.1 is
-#       F_{drag} = gamma P v^2 m
-# where P is atmospheric pressure, v is the speed, m the mass (as a standin
+#       F_{drag} = gamma D v^2 m
+# where D is atmospheric density, v is the speed, m the mass (as a standin
 # for cross-section).  gamma combines a bunch of coefficients in one
 # (including the 1/2 that would normally be there).  It is not actually
 # a constant, but it varies little over reported terminal velocities and over
 # the parts we actually use (though aero components have lower drag).
-#
-# And it's a round number.
-gamma = 0.001
+coefficientOfDrag = 0.2 # Assumed constant, not really the case
+dragMultiplier = 0.008
+kerbinSurfaceDensity = 1.2230948554874
+gamma = 0.5 * coefficientOfDrag * dragMultiplier * kerbinSurfaceDensity
 
 
 class planet(object):
@@ -161,7 +162,7 @@ class planet(object):
 
         altitude is in meters, velocity in m/s
         """
-        # F_{drag} = P v^2 m gamma, where P is atmospheric pressure, v is
+        # F_{drag} = D v^2 m gamma, where D is atmospheric pressure, v is
         # the speed, m the mass (as a standin for cross-section), and gamma
         # combines a bunch of variables that are close enough to constant.
         # To get the acceleration, divide by mass, which cancels out m:
