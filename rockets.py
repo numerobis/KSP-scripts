@@ -99,7 +99,6 @@ class stage(object):
         self.dryMass = dryMass
         self.fullMass = fullMass
         self.Isp = Isp
-        self.burnTime = engine.burnTime(deltaV, Isp, thrust, dryMass)
         self.thrust = thrust
         self.vectoringThrust = vectoringThrust
         self.altitude = altitude
@@ -148,12 +147,17 @@ class stage(object):
             description = ("%dx %d %s and %d T fuel" %
                 (self.numTowers, self.numEngines // self.numTowers,
                  self.engineType.name, self.propellantMass // self.numTowers))
+
+        try:
+            burnTime = engine.burnTime(self.targetDeltaV, self.Isp, self.thrust, self.dryMass)
+        except engine.WeakEngineException:
+            burnTime = 0
         return (
             "%g T:%s %s, %.2fs burn at %g kN (%.2f m/s^2), Isp %d"
             %   (self.fullMass,
                  " asparagus" if self.asparagus else "",
                  description,
-                 self.burnTime,
+                 burnTime,
                  self.thrust,
                  self.thrust / self.fullMass,
                  self.Isp)
@@ -1010,7 +1014,7 @@ class analyst(object):
             except engine.WeakEngineException:
                 # This implies roundoff error, since we didn't change the engines.
                 newS = None
-            if newS.propellantMass > oldStage.propellantMass:
+            if newS and newS.propellantMass > oldStage.propellantMass:
                 # This implies roundoff, since we reduced the mass above.
                 newS = None
             if not newS:
