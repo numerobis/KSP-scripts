@@ -15,7 +15,7 @@
 
 from __future__ import division
 import math
-from math import sqrt, cos, sin, exp, log
+from math import sqrt, cos, sin, exp, log, pi
 
 from physics import g0, L2, quadratic
 
@@ -25,24 +25,27 @@ the KSP solar system.
 """
 
 # The drag model in KSP 0.18.1 is
-#       F_{drag} = gamma P v^2 m
-# where P is atmospheric pressure, v is the speed, m the mass (as a standin
+#       F_{drag} = gamma D v^2 m
+# where D is atmospheric density, v is the speed, m the mass (as a standin
 # for cross-section).  gamma combines a bunch of coefficients in one
 # (including the 1/2 that would normally be there).  It is not actually
 # a constant, but it varies little over reported terminal velocities and over
 # the parts we actually use (though aero components have lower drag).
-#
-# And it's a round number.
-gamma = 0.001
+coefficientOfDrag = 0.2 # Assumed constant, not really the case
+dragMultiplier = 0.008
+kerbinSurfaceDensity = 1.2230948554874
+gamma = 0.5 * coefficientOfDrag * dragMultiplier * kerbinSurfaceDensity
 
 
 class planet(object):
 
-    def __init__(self, name, gravityParam, radiusKm, sidereal, datumPressure, scale):
+    def __init__(self, name, gravityParam, radiusKm, siderealPeriod, datumPressure, scale):
         self.name = name
         self.datumPressure = datumPressure # atm
         self.scale = scale      # m (pressure falls by e every scale altitude)
-        self.siderealRotationSpeed = sidereal # m/s
+        # Use siderealPeriod because those are more exact values
+	# 2 * pi * r = circumference, divide by period to get m/s
+        self.siderealRotationSpeed = 2 * pi * radiusKm * 1000 / siderealPeriod # m/s
         self.radius = radiusKm * 1000 # stored in m
         self.mu = gravityParam  # m^3/s^2
 
@@ -146,9 +149,10 @@ class planet(object):
         altitude is in meters.
         """
 
-        # v = sqrt(g/ (alpha * gamma * e^{-altitude/beta}))
+        # v = sqrt(g/ (datumPressure * gamma * e^{-altitude/scale}))
         # Then pull the e term out, and remember that gravity changes
         # (slightly) with altitude.
+        if altitude is None or altitude >= self.topOfAtmosphere(): return float("inf")
         return exp(0.5 * altitude / self.scale) * sqrt(
                     self.gravity(altitude) / (gamma * self.datumPressure) )
 
@@ -161,11 +165,12 @@ class planet(object):
 
         altitude is in meters, velocity in m/s
         """
-        # F_{drag} = P v^2 m gamma, where P is atmospheric pressure, v is
+        # F_{drag} = D v^2 m gamma, where D is atmospheric pressure, v is
         # the speed, m the mass (as a standin for cross-section), and gamma
         # combines a bunch of variables that are close enough to constant.
         # To get the acceleration, divide by mass, which cancels out m:
         # a_{drag} = gamma P v^2
+        if altitude is None or altitude >= self.topOfAtmosphere(): return 0
         return gamma * self.pressure(altitude) * velocity * velocity
 
     def pressure(self, altitude):
@@ -183,7 +188,7 @@ class planet(object):
 
         pressure is in kerbin standard atmospheres
         """
-        if pressure < 1e-6 * self.datumPressure:
+        if pressure < 1e-6 * self.datumPressure or self.datumPressure is 0:
             return None
         # p = datum * e^(-alt/scale)
         # scale * log(datum/p) = alt
@@ -201,10 +206,24 @@ class planet(object):
         # log(1e6) ~ 13.81551...
         return self.scale * 13.81551
 
-kerbin = planet("Kerbin", 3531600000000, 600,  174.5,  1,   5000)
-eve    = planet("Eve",    8171730200000, 700,   54.6,  5,   7000)
-laythe = planet("Laythe", 1962000000000, 500,   59.3,  0.8, 4000)
-jool   = planet("Jool",     2.82528E+14, 600, 1047.2, 15,   9000)
+# Paremeters: name, gravityParam, radiusKm, siderealPeriod, datumPressure, scale
+kerbol = planet("Kerbol", 1.172332794E+18, 261600,  432000,   0,    0)
+kerbin = planet("Kerbin",      3.5316E+12,    600,   21600,   1, 5000)
+mun    = planet("Mun",        65138397521,    200,  138984,   0,    0)
+minmus = planet("Minmus",      1765800026,     60,   40400,   0,    0)
+moho   = planet("Moho",      245250003655,    250, 1210000,   0,    0)
+eve    = planet("Eve",      8171730229211,    700,   80500,   5, 7000)
+duna   = planet("Duna",      301363211975,    320,   65518, 0.2, 3000)
+ike    = planet("Ike",        18568368573,    130,   65518,   0,    0)
+jool   = planet("Jool",   282528004209995,    600,   36000,  15, 9000)
+laythe = planet("Laythe",   1962000029236,    500,   52981, 0.8, 4000)
+vall   = planet("Vall",      207481499474,    300,  105962,   0,    0)
+bop    = planet("Bop",         2486834944,     65,  544507,   0,    0)
+tylo   = planet("Tylo",     2825280042100,    600,  211926,   0,    0)
+gilly  = planet("Gilly",          8289450,     13,   28255,   0,    0)
+pol    = planet("Pol",          227905920,     44,  901903,   0,    0)
+dres   = planet("Dres",       21484488600,    138,   34800,   0,    0)
+eeloo  = planet("Eeloo",      74410814527,    210,   19460,   0,    0)
 
 _planets = dict([ (p.name.lower(), p) for p in (kerbin, eve, laythe, jool) ])
 def getPlanet(name):
