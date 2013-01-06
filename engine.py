@@ -217,11 +217,17 @@ def combineIsp(engines, planet, altitude):
         else: return e.thrust * c / e.Isp(planet, altitude)
 
     try:
-        return (sum(e.thrust * c for (e,c) in engines.iteritems())
-            /   sum(alpha(e,c)   for (e,c) in engines.iteritems()))
+        totalthrust  = sum(e.thrust * c for (e,c) in engines.iteritems())
+        totalweights = sum(alpha(e,c)   for (e,c) in engines.iteritems())
     except AttributeError:
-        return (sum(e.thrust * c for (e,c) in engines)
-            /   sum(alpha(e,c)   for (e,c) in engines))
+        totalthrust  = sum(e.thrust * c for (e,c) in engines)
+        totalweights = sum(alpha(e,c)   for (e,c) in engines)
+
+    # no thrust at all => Isp may as well be zero
+    if totalthrust == 0:
+        return 0
+    else:
+        return totalthrust / totalweights
 
 
 # combine 2x nuke and 1x sail
