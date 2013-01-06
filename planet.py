@@ -206,25 +206,29 @@ class planet(object):
         # log(1e6) ~ 13.81551...
         return self.scale * 13.81551
 
-# Paremeters: name, gravityParam, radiusKm, siderealPeriod, datumPressure, scale
-kerbol = planet("Kerbol", 1.172332794E+18, 261600,  432000,   0,    0)
-kerbin = planet("Kerbin",      3.5316E+12,    600,   21600,   1, 5000)
-mun    = planet("Mun",        65138397521,    200,  138984,   0,    0)
-minmus = planet("Minmus",      1765800026,     60,   40400,   0,    0)
-moho   = planet("Moho",      245250003655,    250, 1210000,   0,    0)
-eve    = planet("Eve",      8171730229211,    700,   80500,   5, 7000)
-duna   = planet("Duna",      301363211975,    320,   65518, 0.2, 3000)
-ike    = planet("Ike",        18568368573,    130,   65518,   0,    0)
-jool   = planet("Jool",   282528004209995,    600,   36000,  15, 9000)
-laythe = planet("Laythe",   1962000029236,    500,   52981, 0.8, 4000)
-vall   = planet("Vall",      207481499474,    300,  105962,   0,    0)
-bop    = planet("Bop",         2486834944,     65,  544507,   0,    0)
-tylo   = planet("Tylo",     2825280042100,    600,  211926,   0,    0)
-gilly  = planet("Gilly",          8289450,     13,   28255,   0,    0)
-pol    = planet("Pol",          227905920,     44,  901903,   0,    0)
-dres   = planet("Dres",       21484488600,    138,   34800,   0,    0)
-eeloo  = planet("Eeloo",      74410814527,    210,   19460,   0,    0)
-
-_planets = dict([ (p.name.lower(), p) for p in (kerbin, eve, laythe, jool) ])
+# Paremeters: name, gravityParam, radiusKm, siderealPeriod, datumPressure, scale height
+planets = dict([ (p.name.lower(), p) for p in (
+    planet("Kerbol", 1.172332794E+18, 261600,  432000,   0,    0),
+    planet("Kerbin",      3.5316E+12,    600,   21600,   1, 5000),
+    planet("Mun",        65138397521,    200,  138984,   0,    0),
+    planet("Minmus",      1765800026,     60,   40400,   0,    0),
+    planet("Moho",      245250003655,    250, 1210000,   0,    0),
+    planet("Eve",      8171730229211,    700,   80500,   5, 7000),
+    planet("Duna",      301363211975,    320,   65518, 0.2, 3000),
+    planet("Ike",        18568368573,    130,   65518,   0,    0),
+    planet("Jool",   282528004209995,    600,   36000,  15, 9000),
+    planet("Laythe",   1962000029236,    500,   52981, 0.8, 4000),
+    planet("Vall",      207481499474,    300,  105962,   0,    0),
+    planet("Bop",         2486834944,     65,  544507,   0,    0),
+    planet("Tylo",     2825280042100,    600,  211926,   0,    0),
+    planet("Gilly",          8289450,     13,   28255,   0,    0),
+    planet("Pol",          227905920,     44,  901903,   0,    0),
+    planet("Dres",       21484488600,    138,   34800,   0,    0),
+    planet("Eeloo",      74410814527,    210,   19460,   0,    0),
+) ])
 def getPlanet(name):
-    return _planets[name.lower()]
+    return planets[name.lower()]
+
+# register the planets with the module, so users can write planet.kerbin or planet.getPlanet("kerbin") equivalently
+for (name, p) in planets.iteritems():
+    globals()[name] = p
