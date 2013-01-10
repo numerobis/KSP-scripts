@@ -150,8 +150,8 @@ class planet(object):
         transfer.
 
         a1 and a2 are in meters above the surface.
-        returns a pair (dV1, dV2) corresponding to the two burns required.
-            if a1 < a2, burn prograde; else burn retrograde
+        returns a pair (dV1, dV2) corresponding to the two burns required,
+            positive means prograde, negative means retrograde
         """
         r1 = a1 + self.radius
         r2 = a2 + self.radius
@@ -165,31 +165,49 @@ class planet(object):
         dV2 =   sqrt_mu / sqrt_r2 * (1 - sqrt_r1 * sqrt_2_sum)
         return (dV1, dV2)
 
-    def bielliptic(self, a1, a2, aintermediate):
+    def bielliptic(self, a1, a2, aintermediate = None):
         """
         Given a circular orbit at altitude a1 and a target orbit at altitude a2,
         along with an intermediate altitude, return the delta-V budget of the
         three burns required for a bielliptic transfer.
 
         a1, a2, and aintermediate are in meters above the surface
-        returns a triple (dV1, dV2, dV3) corresponding to the three burns required.
-            if a1 < a2 then burn dV1 and dV2 prograde, and dV3 retrograde
-            else burn dV1 prograde, and dV2 and dV3 retrograde
+        returns a triple (dV1, dV2, dV3) corresponding to the three burns required,
+            positive means prograde, negative means retrograde
         """
         r0 = a1 + self.radius
-        rb = aintermediate + self.radius
+        if aintermediate is None:
+            rb = self.SOI
+        else:
+            rb = aintermediate + self.radius
         rf = a2 + self.radius
-        print ("bielliptic: start %g, intermediate %g, end %g"
-            % (r0, rb, rf))
 
         # source: wikipedia and some simplification
         mu = self.mu
         two_r0rb = 2 / (r0 + rb)
+        two_rbrf = 2 / (rb + rf)
         sqrt_2_rbrf = math.sqrt(2 * rf / (rb + rf))
         dV1 = math.sqrt(mu / r0) * (math.sqrt(rb * two_r0rb) - 1)
-        dV2 = math.sqrt(mu / rb) * (sqrt_2_rbrf - math.sqrt(r0 * two_r0rb))
-        dV3 = math.sqrt(mu / rf) * (1 - sqrt_2_rbrf)
+        dV2 = math.sqrt(mu / rb) * (math.sqrt(rf * two_rbrf) - math.sqrt(r0 * two_r0rb))
+        dV3 = math.sqrt(mu / rf) * (1 - math.sqrt(rb * two_rbrf))
         return (dV1, dV2, dV3)
+
+    def transferBurn(self, a1, a2):
+        """
+        Given a circular orbit at altitude a1 and a target orbit at altitude a2,
+        return the cheaper of the bi-elliptic or the hohmann transfer.
+
+        a1, a2, and aintermediate are in meters above the surface
+        returns either a pair (dV1, dV2) or a triple (dV1, dV2, dV3)
+        corresponding to the burns required.  Positive means prograde, negative
+        means retrograde.
+        """
+        b = self.bielliptic(a1, a2)
+        h = self.hohmann(a1, a2)
+        if sum(abs(x) for x in b) < sum(abs(x) for x in h):
+            return b
+        else:
+            return h
 
     def soiBurn(self, altitude, soiSpeed):
         """
