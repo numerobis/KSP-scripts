@@ -39,15 +39,16 @@ gamma = 0.5 * coefficientOfDrag * dragMultiplier * kerbinSurfaceDensity
 
 class planet(object):
 
-    def __init__(self, name, gravityParam, radiusKm, siderealPeriod, datumPressure, scale):
+    def __init__(self, name, gravityParam, SOI, radiusKm, siderealPeriod, datumPressure, scale):
         self.name = name
-        self.datumPressure = datumPressure # atm
+        self.mu = gravityParam          # m^3/s^2
+        self.SOI = SOI                  # m
+        self.radius = radiusKm * 1000   # stored in m, received in km
+
+        self.siderealPeriod = siderealPeriod    # s
+        self.siderealRotationSpeed = 2 * pi * self.radius / siderealPeriod # m/s
+        self.datumPressure = datumPressure      # atm
         self.scale = scale      # m (pressure falls by e every scale altitude)
-        # Use siderealPeriod because those are more exact values
-	# 2 * pi * r = circumference, divide by period to get m/s
-        self.siderealRotationSpeed = 2 * pi * radiusKm * 1000 / siderealPeriod # m/s
-        self.radius = radiusKm * 1000 # stored in m
-        self.mu = gravityParam  # m^3/s^2
 
     def __str__(self): return self.name
 
@@ -74,7 +75,8 @@ class planet(object):
     def escapeVelocity(self, altitude):
         """
         At a given altitude, return the minimum velocity that will result in
-        escape.
+        escape from this gravity well.  Note that we can likely leave the
+        sphere of influence with much less speed.
 
         altitude is in meters.
         """
@@ -141,6 +143,71 @@ class planet(object):
         v = L2(velocity)
         return self.determineOrbit(h, (v, psi))
 
+    def hohmann(self, a1, a2):
+        """
+        Given a circular orbit at altitude a1 and a target orbit at altitude
+        a2, return the delta-V budget of the two burns required for a Hohmann
+        transfer.
+
+        a1 and a2 are in meters above the surface.
+        returns a pair (dV1, dV2) corresponding to the two burns required.
+            if a1 < a2, burn prograde; else burn retrograde
+        """
+        r1 = a1 + self.radius
+        r2 = a2 + self.radius
+
+        # source: wikipedia
+        sqrt_r1 = math.sqrt(r1)
+        sqrt_r2 = math.sqrt(r2)
+        sqrt_2_sum = math.sqrt(2 / (r1 + r2))
+        sqrt_mu = math.sqrt(self.mu)
+        dV1 =   sqrt_mu / sqrt_r1 * (sqrt_r2 * sqrt_2_sum - 1)
+        dV2 =   sqrt_mu / sqrt_r2 * (1 - sqrt_r1 * sqrt_2_sum)
+        return (dV1, dV2)
+
+    def bielliptic(self, a1, a2, aintermediate):
+        """
+        Given a circular orbit at altitude a1 and a target orbit at altitude a2,
+        along with an intermediate altitude, return the delta-V budget of the
+        three burns required for a bielliptic transfer.
+
+        a1, a2, and aintermediate are in meters above the surface
+        returns a triple (dV1, dV2, dV3) corresponding to the three burns required.
+            if a1 < a2 then burn dV1 and dV2 prograde, and dV3 retrograde
+            else burn dV1 prograde, and dV2 and dV3 retrograde
+        """
+        r0 = a1 + self.radius
+        rb = aintermediate + self.radius
+        rf = a2 + self.radius
+        print ("bielliptic: start %g, intermediate %g, end %g"
+            % (r0, rb, rf))
+
+        # source: wikipedia and some simplification
+        mu = self.mu
+        two_r0rb = 2 / (r0 + rb)
+        sqrt_2_rbrf = math.sqrt(2 * rf / (rb + rf))
+        dV1 = math.sqrt(mu / r0) * (math.sqrt(rb * two_r0rb) - 1)
+        dV2 = math.sqrt(mu / rb) * (sqrt_2_rbrf - math.sqrt(r0 * two_r0rb))
+        dV3 = math.sqrt(mu / rf) * (1 - sqrt_2_rbrf)
+        return (dV1, dV2, dV3)
+
+    def soiBurn(self, altitude, soiSpeed):
+        """
+        If you are in a circular orbit at the given altitude and you want to burn enough
+        to reach the given speed at the sphere of influence, how much should you burn now?
+
+        Returns m/s of deltaV required.
+        """
+        # source: http://forum.kerbalspaceprogram.com/showthread.php/16511-Interplanetary-How-To-Guide
+        r1 = altitude + self.radius
+        r2 = self.SOI
+        v2 = soiSpeed
+        mu = self.mu
+        # v = math.sqrt( (r1 * (r2 * v2 * v2 - 2 * mu) + 2 * r2 * mu) / (r1 * r2) )
+        v = math.sqrt(v2 * v2 + 2 * mu * (r2 - r1) / (r1 * r2))
+        return v - self.orbitalVelocity(altitude)
+
+
     def terminalVelocity(self, altitude):
         """
         Return the terminal velocity at a given altitude.
@@ -206,26 +273,32 @@ class planet(object):
         # log(1e6) ~ 13.81551...
         return self.scale * 13.81551
 
-# Paremeters: name, gravityParam, radiusKm, siderealPeriod, datumPressure, scale height
+
+# the sun has an infinite SOI; arbitrarily set it to 500x the orbit of Jool
+sunSOI = 500 * 71950638386
+
 planets = dict([ (p.name.lower(), p) for p in (
-    planet("Kerbol", 1.172332794E+18, 261600,  432000,   0,    0),
-    planet("Kerbin",      3.5316E+12,    600,   21600,   1, 5000),
-    planet("Mun",        65138397521,    200,  138984,   0,    0),
-    planet("Minmus",      1765800026,     60,   40400,   0,    0),
-    planet("Moho",      245250003655,    250, 1210000,   0,    0),
-    planet("Eve",      8171730229211,    700,   80500,   5, 7000),
-    planet("Duna",      301363211975,    320,   65518, 0.2, 3000),
-    planet("Ike",        18568368573,    130,   65518,   0,    0),
-    planet("Jool",   282528004209995,    600,   36000,  15, 9000),
-    planet("Laythe",   1962000029236,    500,   52981, 0.8, 4000),
-    planet("Vall",      207481499474,    300,  105962,   0,    0),
-    planet("Bop",         2486834944,     65,  544507,   0,    0),
-    planet("Tylo",     2825280042100,    600,  211926,   0,    0),
-    planet("Gilly",          8289450,     13,   28255,   0,    0),
-    planet("Pol",          227905920,     44,  901903,   0,    0),
-    planet("Dres",       21484488600,    138,   34800,   0,    0),
-    planet("Eeloo",      74410814527,    210,   19460,   0,    0),
+    #      name,     mu,             SOI,          radiusKm, sidereal, atm, scale
+    planet("Kerbol", 1.172332794E+18,        sunSOI, 261600,  432000,   0,    0),
+    planet("Moho",      245250003655,   11206449   ,    250, 1210000,   0,    0),
+    planet("Eve",      8171730229211,   85109365   ,    700,   80500,   5, 7000),
+    planet("Gilly",          8289450,     126123.27,     13,   28255,   0,    0),
+    planet("Kerbin",      3.5316E+12,   84159286   ,    600,   21600,   1, 5000),
+    planet("Mun",        65138397521,    2429559.1 ,    200,  138984,   0,    0),
+    planet("Minmus",      1765800026,    2247428.4 ,     60,   40400,   0,    0),
+    planet("Duna",      301363211975,   47921949   ,    320,   65518, 0.2, 3000),
+    planet("Ike",        18568368573,    1049598.9 ,    130,   65518,   0,    0),
+    planet("Dres",       21484488600,   32700000   ,    138,   34800,   0,    0),
+    planet("Jool",   282528004209995, 2455985200   ,    600,   36000,  15, 9000),
+    planet("Laythe",   1962000029236,    3723645.8 ,    500,   52981, 0.8, 4000),
+    planet("Vall",      207481499474,    2406401.4 ,    300,  105962,   0,    0),
+    planet("Tylo",     2825280042100,   10856518   ,    600,  211926,   0,    0),
+    planet("Bop",         2486834944,     993002.8 ,     65,  544507,   0,    0),
+    planet("Pol",          227905920,    1041613   ,     44,  901903,   0,    0),
+    planet("Eeloo",      74410814527,  119087000   ,    210,   19460,   0,    0),
 ) ])
+del sunSOI
+
 def getPlanet(name):
     return planets[name.lower()]
 
