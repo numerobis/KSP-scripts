@@ -17,6 +17,7 @@
 """
 Fundamental constants in the KSP universe (at least in 0.18.1), and various math bits.
 """
+from __future__ import division
 import math
 
 # Standard gravity.
@@ -35,3 +36,39 @@ def quadratic(a, b, c):
 
 def L2(vector):
     return math.sqrt(sum(x*x for x in vector))
+
+
+class PiecewiseLinearCurve(object):
+    def __init__(self, points):
+        """
+        Specify a sorted list of (t, value) pairs.
+        """
+        self.points = tuple(sorted(points, key = lambda x : x[0]))
+
+    def lookup(self, t):
+        """
+        Return the index of the first point whose parameter is greater than or
+        equal to t.  Returns None if t is outside the bounds of the curve.
+        """
+        for (i, (k, v)) in enumerate(self.points):
+            if k >= t:
+                return i
+        return None
+
+    def evaluate(self, t):
+        """
+        Evaluate the curve at parameter position t.
+        TODO: this is piecewise linear, whereas it's something else
+        in-game.
+        """
+        i = self.lookup(t)
+        if i is None:
+            return self.points[-1][1]
+        if i == 0:
+            return self.points[0][1]
+
+        # linear interpolation between i-1 and i
+        (t0, v0) = self.points[i - 1]
+        (t1, v1) = self.points[i]
+        ratio = (t1 - t) / (t1 - t0)
+        return ratio * v0 + (1-ratio) * v1

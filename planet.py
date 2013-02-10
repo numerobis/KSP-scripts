@@ -243,7 +243,7 @@ class planet(object):
 
     def drag(self, altitude, velocity):
         """
-        Return the acceleration due to drag, in m/s^2.
+        Return the acceleration due to drag for a standard rocket, in m/s^2.
 
         This is only possible since the drag force depends on mass;
         otherwise we'd need to know the mass of the vessel also.
@@ -258,6 +258,17 @@ class planet(object):
         if altitude is None or altitude >= self.topOfAtmosphere(): return 0
         return gamma * self.pressure(altitude) * velocity * velocity
 
+    def dragForce(self, altitude, v, mass, Cd):
+        """
+        Return the acceleration due to drag in kN.
+
+        altitude is in meters, velocity in m/s, mass in tonnes, Cd is
+        dimensionless.
+        """
+        rho = self.airdensity(altitude)
+        A = mass * dragMultiplier
+        return 0.5 * Cd * A * rho * v * v
+
     def pressure(self, altitude):
         """
         Return the atmospheric pressure in Atm.
@@ -266,6 +277,12 @@ class planet(object):
         """
         if altitude is None or altitude >= self.topOfAtmosphere(): return 0
         return self.datumPressure * exp(-altitude / self.scale)
+
+    def airdensity(self, altitude):
+	"""
+	Return the air density at the given altitude in kg/m^3
+	"""
+	return self.pressure(altitude) * kerbinSurfaceDensity
 
     def altitude(self, pressure):
         """
