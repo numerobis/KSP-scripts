@@ -138,7 +138,7 @@ def alpha(deltaV, Isp):
 def propellantMass(deltaV, Isp, m0):
     return m0 * (alpha(deltaV, Isp) - 1)
 
-def burnMass(deltaV, Isp, m0):
+def burnMass(deltaV, Isp, m0, b = beta):
     """
     Return the mass of propellant and tanks that we'll need to burn.
 
@@ -165,9 +165,9 @@ def burnMass(deltaV, Isp, m0):
     # Clearly, if (1-alpha+beta) <= 0 then we are in an impossible
     # state: this corresponds to needing infinite fuel.
     a = alpha(deltaV, Isp)
-    if 1 - a + beta <= 0: raise WeakEngineException(Isp)
-    tankMass = m0 * (a - 1) / (1 - a + beta)
-    propMass = tankMass * beta
+    if 1 - a + b <= 0: raise WeakEngineException(Isp)
+    tankMass = m0 * (a - 1) / (1 - a + b)
+    propMass = tankMass * b
     return (propMass, tankMass)
 
 
