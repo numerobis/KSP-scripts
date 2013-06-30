@@ -69,6 +69,14 @@ class jetengine(object):
         Isp = self.Isp(altitude, options = options)
         return 95.565749235474 * throttle * self.maxthrust / Isp
 
+    def fuelRequired(self, altitude, throttle = 1, options = kerbonormative):
+        """
+        LiquidFuel (kg/s) required at the given
+        altitude (m) and throttle ([0-1], default 1).
+        """
+        # Fuel:air is 1:15, so we need 1/15 of the amount of air we need.
+        return self.airRequired(altitude, throttle, options) / 15.0
+
 
 turbojet = jetengine("TurboJet Engine",
     ( (1, 800), (0.3, 2500), (0, 1200) ), # isp curve
