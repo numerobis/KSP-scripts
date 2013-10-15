@@ -139,10 +139,11 @@ class intake(object):
         airtonnes = 0.001 * options.deltaT * airkgpers
         mass = self.drymass + airtonnes
         # TODO: the coefficient is not always 2, but I don't know the formula.
-        return options.planet.dragForce(altitude, v, mass, 2.0)
+        dragCoeff = 2
+        return options.planet.dragForce(altitude, v, mass, 0.3 + dragCoeff)
 
 ramAirIntake = intake("Ram Air Intake", 0.01, 0.01, 0.2)
-radialIntake = intake("XM-G50 Radial Air Intake", 0.1, 0.004, 1.0)
+radialIntake = intake("XM-G50 Radial Air Intake", 0.01, 0.004, 1.0)
 circularIntake = intake("Circular Intake", 0.01, 0.008, 0.2)
 nacelleIntake = intake("Engine Nacelle", 0.3, 0.002, 0.2)
 
@@ -184,11 +185,11 @@ class planeInfo(object):
         self.required = required        # kg/s of air
         self.provided = provided        # kg/s of air
 
-        if required >= provided:
+        if required <= provided:
             self.maxthrottle = 1        # [0,1]
             self.thrust = maxthrust     # kN
         else:
-            maxthrottle = required / provided
+            maxthrottle = provided / required
             self.maxthrottle = maxthrottle
             self.thrust = maxthrust * maxthrottle
         
@@ -210,3 +211,86 @@ class planeInfo(object):
             self.acceleration = 0
         else:
             self.acceleration = self.totalMass / self.netForce
+
+
+
+def maxSpeed(parts, mass, altitude, tolerance = 1e-3, options = kerbonormative):
+    """
+    Return a speed close to the max speed.
+    The speed is guaranteed to have positive net force, but to be within
+    tolerance (in m/s) of a speed with negative net force.
+
+    jets.maxSpeed( (jets.turbojet, (jets.ramAirIntake, 2)), 5, 25250 )
+    1858.9853515625
+    """
+    maxVWithPosForce = 0
+    minVWithNegForce = None
+    v = 1
+
+    # binary search to define the upper bound of the binary search
+    # could do better via physics, but this will work
+    while minVWithNegForce is None:
+        v *= 2
+        plane = planeInfo(altitude, v, mass, parts)
+        if plane.netForce >= 0:
+            maxVWithPosForce = v
+        else:
+            minVWithNegForce = v
+
+    # binary search to find the exact max speed, to within tolerance
+    while minVWithNegForce - maxVWithPosForce > tolerance:
+        v = 0.5*(minVWithNegForce + maxVWithPosForce)
+        plane = planeInfo(altitude, v, mass, parts)
+        if plane.netForce >= 0:
+            maxVWithPosForce = v
+        else:
+            minVWithNegForce = v
+
+    return maxVWithPosForce
+
+def maxSpeedAltitude(parts, mass, tolerance = 1e-3, options = kerbonormative):
+    """
+    Return the max speed and the altitude that can provide it.
+
+    jets.maxSpeedAltitude( (jets.turbojet, (jets.ramAirIntake, 2)), 5)
+    (1860.71484375, 24631.498671722413)
+    """
+    # top speed using turbojets is at low as you can while running out of air
+    def speed(altitude):
+        return maxSpeed(parts, mass, altitude, tolerance, options)
+    def data(altitude):
+        v = speed(altitude)
+        plane = planeInfo(altitude, v, mass, parts, options=options)
+        plane.v = v
+        plane.altitude = altitude
+        return plane
+
+    left = 0
+    right = options.planet.topOfAtmosphere() - 1
+
+    while right - left > 2:
+        mid = 0.5 * (right + left)
+        midPlane = data(mid)
+        if midPlane.required > midPlane.provided:
+            right = mid
+        else:
+            left = mid
+
+    return midPlane.v, mid
+
+def machingbird(parts, mass, tolerance = 1e-3, options = kerbonormative):
+    speedAlt = maxSpeedAltitude(parts, mass, tolerance, options)
+
+    orbitSpeed = options.planet.orbitalVelocity(speedAlt[1])
+    siderealSpeed = options.planet.siderealRotationSpeed
+    
+    # speed to gain to reach orbit at the optimal altitude
+    subOrbitSpeed = orbitSpeed - speedAlt[0]
+    if subOrbitSpeed > siderealSpeed:
+        inclination = 0
+    elif subOrbitSpeed < -siderealSpeed:
+        inclination = 180
+    else:
+        inclination = math.degrees(math.acos(subOrbitSpeed / siderealSpeed))
+
+    return speedAlt[0], speedAlt[1], inclination
