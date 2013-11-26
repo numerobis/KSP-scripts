@@ -21,7 +21,7 @@ from __future__ import division
 import math
 
 # Standard gravity.
-g0 = 9.81 # closer to 9.8065 in the SI world.
+g0 = 9.82 # closer to 9.8065 in the SI world, but it's 9.82 in KSP
 
 def quadratic(a, b, c):
     """
