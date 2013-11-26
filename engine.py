@@ -127,6 +127,10 @@ def lightestEngineForThrust(thrust):
 
 beta = 8 # ratio of propellant mass : dry mass in the big stock tanks.
 
+def deltaV(m1, m0, Isp):
+    Ve = Isp * g0
+    return Ve * math.log(m1 / m0)
+
 def alpha(deltaV, Isp):
     # Corner cases: if deltaV is 0, alpha is 1: m1 = m0 obviously.
     # If Isp is 0, alpha is undefined; raise an exception
