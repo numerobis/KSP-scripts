@@ -65,9 +65,9 @@ class jetengine(object):
         #       mdot = throttle * maxthrust / (Isp g0)
         # Air is 15/16 = 0.9375 of that.
         # maxthrust is kN so multiply by 1000 to get kg/s
-        # fold all the constants together: 1000 * 0.9375 / 9.81 = 95.5...
+        # fold all the constants together: 1000 * 0.9375 / 9.82 = 95.4...
         Isp = self.Isp(altitude, options = options)
-        return 95.565749235474 * throttle * self.maxthrust / Isp
+        return 95.46843177189409 * throttle * self.maxthrust / Isp
 
     def fuelRequired(self, altitude, throttle = 1, options = kerbonormative):
         """
