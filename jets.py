@@ -40,11 +40,13 @@ class jetengine(object):
             name,
             ispCurve,   # key-value pairs
             thrustCurve,# key-value pairs
-            maxthrust): # kN
+            maxthrust,
+            mass): # kN
         self.name        = name
-        self.ispCurve    = PiecewiseLinearCurve(ispCurve)
-        self.thrustCurve = PiecewiseLinearCurve(thrustCurve)
+        self.ispCurve    = ispCurve
+        self.thrustCurve = thrustCurve
         self.maxthrust   = maxthrust
+        self.mass        = mass
 
     def Isp(self, altitude, options = kerbonormative):
         pressure = options.planet.pressure(altitude)
@@ -77,17 +79,25 @@ class jetengine(object):
         # Fuel:air is 1:15, so we need 1/15 of the amount of air we need.
         return self.airRequired(altitude, throttle, options) / 15.0
 
-
 turbojet = jetengine("TurboJet Engine",
-    ( (1, 800), (0.3, 2500), (0, 1200) ), # isp curve
-    ( (0, 0.5), (1000, 1), (2000, 0.5), (2400, 0) ), # thrust curve
-    225 # max thrust
+    PiecewiseLinearCurve.fromfile("data/turbojet-isp.txt"),
+    PiecewiseLinearCurve.fromfile("data/turbojet-thrust.txt"),
+    225, # max thrust
+    1.2 # mass
 )
 
 basicjet = jetengine("Basic Jet Engine",
-    ( (1, 2000), (0.3, 1800), (0, 1000) ), # isp
-    ( (0, 1), (850, 0.2), (1000, 0) ), # thrust
-    150 # max thrust
+    PiecewiseLinearCurve.fromfile("data/jet-isp.txt"),
+    PiecewiseLinearCurve.fromfile("data/jet-thrust.txt"),
+    150, # max thrust
+    1 # mass
+)
+
+rapier = jetengine("RAPIER atmospheric phase",
+    PiecewiseLinearCurve.fromfile("data/turbojet-isp.txt"),
+    PiecewiseLinearCurve.fromfile("data/rapierjet-thrust.txt"),
+    190,
+    1.75
 )
 
 class intake(object):

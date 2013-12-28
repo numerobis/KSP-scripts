@@ -45,6 +45,15 @@ class PiecewiseLinearCurve(object):
         """
         self.points = tuple(sorted(points, key = lambda x : x[0]))
 
+    @staticmethod
+    def fromfile(filename):
+        pts = []
+        with open(filename) as f:
+            for line in f:
+                (k, v) = line.split(' ')
+                pts.append( (float(k),float(v)) )
+        return PiecewiseLinearCurve(pts)
+
     def lookup(self, t):
         """
         Return the index of the first point whose parameter is greater than or
