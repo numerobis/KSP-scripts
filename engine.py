@@ -175,7 +175,7 @@ def burnMass(deltaV, Isp, m0, b = beta):
     return (propMass, tankMass)
 
 
-def burnTime(deltaV, Isp, thrust, m0):
+def burnTimeForPayload(deltaV, Isp, thrust, m0):
     """
     Return the time needed to perform the burn.
     m0 is the dry mass including tanks.
@@ -193,6 +193,11 @@ def burnTime(deltaV, Isp, thrust, m0):
     # The mass we expel is from the ideal rocket equation.
     # The amount of time we burn is thus mprop / (thrust/(Isp*g0))
     mprop = propellantMass(deltaV, Isp, m0)
+    return mprop * Isp * g0 / thrust
+
+def burnTimeFromFull(deltaV, Isp, thrust, m1):
+    a = alpha(deltaV, Isp)
+    mprop = (1.0 - 1.0/a) * m1
     return mprop * Isp * g0 / thrust
 
 def minThrustForBurnTime(deltaV, Isp, m0, time):
