@@ -288,6 +288,30 @@ def maxSpeedAltitude(parts, mass, tolerance = 1e-3, options = kerbonormative):
 
     return midPlane.v, mid
 
+
+def intakesForSpeed(parts, mass, targetSpeed = None, tolerance = 1e-3, options = kerbonormative):
+    """
+    Given an initial configuration, return the min number of intakes to add in
+    order to achieve the target speed.
+    If target speed is not stated, it's the speed of a circular orbit at the
+    top of the atmosphere.
+    """
+    if targetSpeed is None:
+        targetSpeed = options.planet.orbitalVelocity(options.planet.topOfAtmosphere()) - options.planet.siderealRotationSpeed
+
+    (speed, _) = maxSpeedAltitude(parts, mass, tolerance, options)
+    if speed > targetSpeed:
+        return 0
+
+    # todo: binary search, but I am not sure the intake benefit grows monotonically
+    for i in range(1000):
+        iparts = [(ramAirIntake, i)] + [x for x in parts]
+        (speed, _) = maxSpeedAltitude(iparts, mass, tolerance, options)
+        if speed > targetSpeed:
+            return i
+    raise Exception("impossible to reach " + targetSpeed + " even with 1000 intakes")
+
+
 def machingbird(parts, mass, tolerance = 1e-3, options = kerbonormative):
     speedAlt = maxSpeedAltitude(parts, mass, tolerance, options)
 
