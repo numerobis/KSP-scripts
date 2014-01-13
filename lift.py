@@ -29,9 +29,9 @@ def upDegrees(AoAdegrees):
 # matches it, so I renamed to wing for clarity).
 class wing(object):
     def __init__(self, mass, lift, drag):
-        self._mass = mass
-        self._lift = lift
-        self._drag = drag
+        self.mass = mass
+        self.lift = lift
+        self.drag = drag
 
     @classmethod
     def deflectionLift(cls, AoAdegrees):
@@ -44,11 +44,11 @@ class wing(object):
         return math.sin(math.radians(AoAdegrees))
 
     def liftForce(self, AoAdegrees, v, altitude = 0, planet = planet.kerbin):
-        return v * self.deflectionLift(AoAdegrees) * planet.pressure(altitude) * self._lift
+        return v * self.deflectionLift(AoAdegrees) * planet.pressure(altitude) * self.lift
 
     def dragForce(self, AoAdegrees, v, altitude = 0, planet = planet.kerbin):
-        Cd = self.deflectionDrag(AoAdegrees) * self._drag
-        return planet.dragForce(altitude, v, self._mass, Cd)
+        Cd = self.deflectionDrag(AoAdegrees) * self.drag
+        return planet.dragForce(altitude, v, self.mass, Cd)
 
     def forceVector(self, flightPitch, AoA, v, altitude = 0, planet = planet.kerbin):
         """
@@ -88,7 +88,7 @@ sweptWing = wing(0.05, 1.6, 0.6)
 tailFin = wing(0.02, 0.3, 0.5)
 wingConnector = wing(0.05, 1, 0.4)
 structuralWing = wing(0.05, 1, 0.4)
-avT1 = wing(0.05, 0.3, 0.5)
+avt1 = wing(0.05, 0.3, 0.5)
 
 # stock control surfaces
 smallControlSurface = controlSurface(0.01, 0.5, 0.5)
