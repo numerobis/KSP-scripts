@@ -39,7 +39,7 @@ gamma = 0.5 * coefficientOfDrag * dragMultiplier * kerbinSurfaceDensity
 
 class planet(object):
 
-    def __init__(self, name, gravityParam, SOI, radiusKm, siderealPeriod, datumPressure, scale):
+    def __init__(self, name, gravityParam, SOI, radiusKm, siderealPeriod, datumPressure, scale, O2 = False):
         self.name = name
         self.mu = gravityParam          # m^3/s^2
         self.SOI = SOI                  # m
@@ -49,6 +49,7 @@ class planet(object):
         self.siderealRotationSpeed = 2 * pi * self.radius / siderealPeriod # m/s
         self.datumPressure = datumPressure      # atm
         self.scale = scale      # m (pressure falls by e every scale altitude)
+        self.hasOxygen = O2
 
     def __str__(self): return self.name
 
@@ -318,14 +319,14 @@ planets = dict([ (p.name.lower(), p) for p in (
     planet("Moho",      245250003655,   11206449   ,    250, 1210000,   0,    0),
     planet("Eve",      8171730229211,   85109365   ,    700,   80500,   5, 7000),
     planet("Gilly",          8289450,     126123.27,     13,   28255,   0,    0),
-    planet("Kerbin",      3.5316E+12,   84159286   ,    600,   21600,   1, 5000),
+    planet("Kerbin",      3.5316E+12,   84159286   ,    600,   21600,   1, 5000, O2 = True),
     planet("Mun",        65138397521,    2429559.1 ,    200,  138984,   0,    0),
     planet("Minmus",      1765800026,    2247428.4 ,     60,   40400,   0,    0),
     planet("Duna",      301363211975,   47921949   ,    320,   65518, 0.2, 3000),
     planet("Ike",        18568368573,    1049598.9 ,    130,   65518,   0,    0),
     planet("Dres",       21484488600,   32700000   ,    138,   34800,   0,    0),
     planet("Jool",   282528004209995, 2455985200   ,    600,   36000,  15, 9000),
-    planet("Laythe",   1962000029236,    3723645.8 ,    500,   52981, 0.8, 4000),
+    planet("Laythe",   1962000029236,    3723645.8 ,    500,   52981, 0.8, 4000, O2 = True),
     planet("Vall",      207481499474,    2406401.4 ,    300,  105962,   0,    0),
     planet("Tylo",     2825280042100,   10856518   ,    600,  211926,   0,    0),
     planet("Bop",         2486834944,     993002.8 ,     65,  544507,   0,    0),
