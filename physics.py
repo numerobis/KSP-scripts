@@ -37,6 +37,11 @@ def quadratic(a, b, c):
 def L2(vector):
     return math.sqrt(sum(x*x for x in vector))
 
+def vectoradd(a, b):
+    return [ ax + bx for (ax,bx) in zip(a,b) ]
+
+def vectorscale(s, v):
+    return [ s * vx for vx in v ]
 
 class PiecewiseLinearCurve(object):
     def __init__(self, points):
