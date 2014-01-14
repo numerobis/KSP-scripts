@@ -92,7 +92,7 @@ def forces(parts, mass, flightPitch, AoA, v, altitude = 0, planet = planet.kerbi
         maxthrust = vectoradd(maxthrust, vectorscale(n, thrustVector(typ, angle)))
         airUse += n * airRequired(typ)
         airGet += n * airProvided(typ, angle)
-        accountedMass += typ.mass
+        accountedMass += n * typ.mass
 
     # account for throttle setting due to air
     if airUse <= airGet:
