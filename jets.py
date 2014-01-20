@@ -28,12 +28,12 @@ class standardoptions(object):
     Represent some standard options that don't depend on which
     function you're calling, but which affect most of them.
     """
-    def __init__(self, planet, deltaT):
+    def __init__(self, planet, deltaT = 0.04):
         self.planet = planet
         self.deltaT = deltaT
 
-kerbonormative = standardoptions(planet.kerbin, 0.03)
-laythenormative = standardoptions(planet.laythe, 0.03)
+kerbonormative = standardoptions(planet.kerbin)
+laythenormative = standardoptions(planet.laythe)
 
 class jetengine(object):
     def __init__(self, 
@@ -105,17 +105,22 @@ class intake(object):
         self.name = name
         self.area = area         # m^2
         self.capacity = capacity # units
-        self.drymass = drymass      # tonnes
+        self.mass = drymass
 
     def intakeair(self, altitude, v, AoA = 0, options = kerbonormative):
         """
         Return the intake air (kg/s) provided at the given
         altitude (m) and airspeed (m/s), assuming the given angle 
-        of attack (radians, default 0) and physics deltaT (s, default 0.03)
+        of attack (degrees, default 0) and physics deltaT (s, default 0.03)
 
         The angle of attack must be less than pi/2, otherwise a different
         formula would hold.
+
+        The planet must have oxygen.
         """
+        if not options.planet.hasOxygen:
+            return 0
+
         # For low angle of attack, the formula is:
         #       I = area * airdensity * cos(AoA) * u^2 (6 intakespeed + v)
         # in t/s ; multiply by 1000 to get kg/s
@@ -126,13 +131,19 @@ class intake(object):
 
         # After folding the u = 0.2, intakespeed = 100, and the *1000, 
         # this is what we get:
-        air = self.area * D * math.cos(AoA) * 40 * (600 + v)
+        air = self.area * D * math.cos(math.radians(AoA)) * 40 * (600 + v)
 
         # The intake can hold no more than its capacity at any time step.
         # This means your plane flies better with a smaller deltaT!
         maxair = self.capacity * 5 / options.deltaT
 
         return min(air, maxair)
+
+    def dragCoeff(self, v, AoA = 0):
+        val = 0.6 * v * self.area * math.cos(math.radians(AoA))
+        val = max(val, 0)
+        val = min(val, 2)
+        return val + 0.3
 
     def drag(self, altitude, v, AoA = 0, options = kerbonormative):
         """
@@ -147,10 +158,9 @@ class intake(object):
         # not kg.
         airkgpers = self.intakeair(altitude, v, AoA, options=options)
         airtonnes = 0.001 * options.deltaT * airkgpers
-        mass = self.drymass + airtonnes
-        # TODO: the coefficient is not always 2, but I don't know the formula.
-        dragCoeff = 2
-        return options.planet.dragForce(altitude, v, mass, 0.3 + dragCoeff)
+        mass = self.mass + airtonnes
+        Cd = self.dragCoeff(v, AoA)
+        return options.planet.dragForce(altitude, v, mass, Cd)
 
 ramAirIntake = intake("Ram Air Intake", 0.01, 0.01, 0.2)
 radialIntake = intake("XM-G50 Radial Air Intake", 0.01, 0.004, 1.0)
@@ -189,7 +199,7 @@ class planeInfo(object):
                                         options = options)
                 intakedrag += n * typ.drag(altitude, v, AoA = AoA, 
                                         options = options)
-                intakemass += n * typ.drymass
+                intakemass += n * typ.mass
 
         self.maxthrust = maxthrust      # kN
         self.required = required        # kg/s of air
