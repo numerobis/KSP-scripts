@@ -142,6 +142,13 @@ def alpha(deltaV, Isp):
 def propellantMass(deltaV, Isp, m0):
     return m0 * (alpha(deltaV, Isp) - 1)
 
+def propellantMassBurned(deltaV, Isp, m1):
+    # m1 = m0 alpha
+    # m0 = m1 / alpha
+    # mprop = m1 - m0
+    # mprop = m1 (1 - 1/alpha)
+    return m1 * (1 - 1.0 / alpha(deltaV, Isp))
+
 def burnMass(deltaV, Isp, m0, b = beta):
     """
     Return the mass of propellant and tanks that we'll need to burn.
