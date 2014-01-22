@@ -31,6 +31,8 @@ class standardoptions(object):
     def __init__(self, planet, deltaT = 0.04):
         self.planet = planet
         self.deltaT = deltaT
+# easier to type
+options = standardoptions
 
 kerbonormative = standardoptions(planet.kerbin)
 laythenormative = standardoptions(planet.laythe)
