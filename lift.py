@@ -43,8 +43,14 @@ class wing(object):
     def deflectionDrag(cls, AoAdegrees):
         return math.sin(math.radians(AoAdegrees))
 
+    def _liftFactor(self, AoAdegrees, altitude = 0, planet = planet.kerbin):
+        return self.deflectionLift(AoAdegrees) * planet.pressure(altitude) * self.lift
+
     def liftForce(self, AoAdegrees, v, altitude = 0, planet = planet.kerbin):
-        return v * self.deflectionLift(AoAdegrees) * planet.pressure(altitude) * self.lift
+        return v * self._liftFactor(AoAdegrees, altitude, planet)
+
+    def speedForLift(self, AoAdegrees, F, altitude = 0, planet = planet.kerbin):
+        return F / self._liftFactor(AoAdegrees, altitude, planet)
 
     def dragForce(self, AoAdegrees, v, altitude = 0, planet = planet.kerbin):
         Cd = self.deflectionDrag(AoAdegrees) * self.drag
