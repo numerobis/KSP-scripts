@@ -56,7 +56,7 @@ def evaluateStages(payload, index):
 def reportLiftoffSpeed(name, mass, planet, altitude):
     liftForceNeeded = planet.gravity(altitude) * mass
     takeoffLift = liftForceNeeded  / nlift
-    liftoffSpeed = lift.smallControlSurface.speedForLift(90, takeoffLift, altitude, planet)
+    liftoffSpeed = lift.smallControlSurface.speedForLift(liftSurfaceAoA, takeoffLift, altitude, planet)
     print("%s speed %g m/s" % (name, liftoffSpeed))
 
 
@@ -65,6 +65,7 @@ nlift = 0
 nturbo = 2
 takeoffSpeed = 60
 runwayAltitude = 70
+liftSurfaceAoA = 60
 
 fixedPayload = sum( (
             0.08, # nose cone science
@@ -95,7 +96,7 @@ for i in range(1, 10):
     launchMass = stages[0].mass
 
     needLiftForce = launchMass * planet.kerbin.gravity(runwayAltitude)
-    liftPerSCS = lift.smallControlSurface.liftForce(90, takeoffSpeed, runwayAltitude)
+    liftPerSCS = lift.smallControlSurface.liftForce(liftSurfaceAoA, takeoffSpeed, runwayAltitude)
     newNcontrol = math.ceil(needLiftForce / liftPerSCS)
 
 
@@ -115,8 +116,8 @@ for i in range(1, 10):
         break
 
 print ("payload %g, launch mass %g" % (fixedPayload, launchMass))
-print ("%d turbojets, %d intakes, %d small control surfaces pointed down"
-        % (nturbo, nintakes, nlift))
+print ("%d turbojets, %d intakes, %d small control surfaces pointed %g degrees down"
+        % (nturbo, nintakes, nlift, liftSurfaceAoA))
 
 jetTanks = sum( [ x.jetTanks for x in stages ] )
 rocketTanks = sum( [ x.rocketTanks for x in stages ] )
