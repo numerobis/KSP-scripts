@@ -59,6 +59,7 @@ nturbo = 2
 takeoffAoA = 20 # pull back to 20 degree pitch
 takeoffSpeed = 60
 runwayAltitude = 70
+liftSurfaceAoA = 60
 
 for i in range(1, 10):
     payload = sum( (
