@@ -20,7 +20,7 @@
 
 from __future__ import division # / means float div always
 import math
-from physics import g0, PiecewiseLinearCurve
+from physics import g0, PiecewiseLinearCurve, AnimationCurve
 import planet
 
 class standardoptions(object):
@@ -83,21 +83,32 @@ class jetengine(object):
 
 turbojet = jetengine("TurboJet Engine",
     PiecewiseLinearCurve.fromfile("data/turbojet-isp.txt"),
-    PiecewiseLinearCurve.fromfile("data/turbojet-thrust.txt"),
+    AnimationCurve((
+        (0, 0.5, 0, 0), 
+        (1000, 1, 0, 0), 
+        (2000, 0.5, 0, 0), 
+        (2400, 0, 0, 0))),
     225, # max thrust
     1.2 # mass
 )
 
 basicjet = jetengine("Basic Jet Engine",
     PiecewiseLinearCurve.fromfile("data/jet-isp.txt"),
-    PiecewiseLinearCurve.fromfile("data/jet-thrust.txt"),
+    AnimationCurve((
+        (1000, 0, 0, 0),
+        (850, 0.2, 0, 0),
+        (0, 1, 0, 0))),
     150, # max thrust
     1 # mass
 )
 
 rapier = jetengine("RAPIER atmospheric phase",
     PiecewiseLinearCurve.fromfile("data/turbojet-isp.txt"),
-    PiecewiseLinearCurve.fromfile("data/rapierjet-thrust.txt"),
+    AnimationCurve((
+        (0, 0.5, 0, 0), 
+        (1000, 1, 0, 0), 
+        (2000, 0.5, 0, 0), 
+        (2200, 0, 0, 0))),
     190,
     1.75
 )

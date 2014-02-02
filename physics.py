@@ -86,3 +86,50 @@ class PiecewiseLinearCurve(object):
         (t1, v1) = self.points[i]
         ratio = (t1 - t) / (t1 - t0)
         return ratio * v0 + (1-ratio) * v1
+
+class AnimationCurve(object):
+    """
+    Attempted re-implementation of Unity's AnimationCurve.
+    TODO: compute tangents automatically.
+    """
+    def __init__(self, data):
+        """
+        Data must be a list of quads (key, value, inTangent, outTangent)
+        """
+        for x in data: assert len(x) == 4
+        # copy the data
+        self._data = tuple(tuple(x) for x in sorted(data))
+
+    def evaluate(self, key):
+        # linear search for the first key bigger than the input
+        def find():
+            for i, (k,v,_,__) in enumerate(self._data):
+                if key <= k: return i
+            return -1
+        i = find()
+
+        # before the first, return the first value; similarly after the last
+        if i == 0: return self._data[0][1]
+        if i == -1: return self._data[-1][1]
+
+        # cubic interpolation, formula from
+        # http://answers.unity3d.com/questions/464782/t-is-the-math-behind-animationcurveevaluate.html
+        t0, v0, _, t0out = self._data[i - 1]
+        t1, v1, t1in, _ = self._data[i]
+        if t0 == t1:
+            return 0.5 * (v0 + v1)
+
+        dt = t1 - t0
+        t = (key - t0) / dt
+        t2 = t * t
+        t3 = t * t * t
+
+        m0 = dt * t0out
+        m1 = dt * t1in
+
+        a = 2 * t3 - 3 * t2 + 1
+        b = t3 - 2 * t2 + t
+        c = t3 - t2
+        d = -2 * t3 + 3 * t2
+
+        return a * v0 + b * m0 + c * m1 + d * v1
