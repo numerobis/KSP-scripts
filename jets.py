@@ -82,7 +82,10 @@ class jetengine(object):
         return self.airRequired(altitude, throttle, options) / 15.0
 
 turbojet = jetengine("TurboJet Engine",
-    PiecewiseLinearCurve.fromfile("data/turbojet-isp.txt"),
+    AnimationCurve((
+            (0, 1200),
+            (0.3, 2500),
+            (1, 800))),
     AnimationCurve((
         (0, 0.5, 0, 0), 
         (1000, 1, 0, 0), 
@@ -93,7 +96,10 @@ turbojet = jetengine("TurboJet Engine",
 )
 
 basicjet = jetengine("Basic Jet Engine",
-    PiecewiseLinearCurve.fromfile("data/jet-isp.txt"),
+    AnimationCurve((
+            (0, 1000),
+            (0.3, 1800),
+            (1, 2000))),
     AnimationCurve((
         (1000, 0, 0, 0),
         (850, 0.2, 0, 0),
@@ -103,7 +109,10 @@ basicjet = jetengine("Basic Jet Engine",
 )
 
 rapier = jetengine("RAPIER atmospheric phase",
-    PiecewiseLinearCurve.fromfile("data/turbojet-isp.txt"),
+    AnimationCurve((
+            (0, 1200),
+            (0.3, 2500),
+            (1, 800))),
     AnimationCurve((
         (0, 0.5, 0, 0), 
         (1000, 1, 0, 0), 

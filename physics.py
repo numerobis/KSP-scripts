@@ -94,11 +94,39 @@ class AnimationCurve(object):
     """
     def __init__(self, data):
         """
-        Data must be a list of quads (key, value, inTangent, outTangent)
+        Data must be a list of quads (key, value, inTangent, outTangent),
+        or a list of pairs (key, value) where the tangents are computed
+        automatically.
         """
-        for x in data: assert len(x) == 4
-        # copy the data
-        self._data = tuple(tuple(x) for x in sorted(data))
+        if len(data[0]) == 4:
+            for x in data: assert len(x) == 4
+            # copy the data
+            self._data = tuple(tuple(x) for x in sorted(data))
+        else:
+            for x in data: assert len(x) == 2
+            # Copy the data and add tangents.
+            # The in/out tangent are the same; they're the average of the
+            # piecewise linear slope to the predecessor and successor, as
+            # K^2 figured out.
+            # http://forum.kerbalspaceprogram.com/threads/67606-Fuel-consumption-as-a-function-of-atmospheric-pressure?p=944742&viewfull=1#post944742
+            data = list(sorted(data))
+            def slope(i, j):
+                ki, vi = data[i][0], data[i][1]
+                kj, vj = data[j][0], data[j][1]
+                if ki == kj: return 0
+                return (vj-vi) / (kj-ki)
+            for i in range(len(data)):
+                if i > 0 and i + 1 < len(data):
+                    p = slope(i-1, i)
+                    n = slope(i, i+1)
+                    tangent = 0.5 * (p+n)
+                elif i > 0:
+                    tangent = slope(i-1, i)
+                else:
+                    tangent = slope(i, i+1)
+                k, v = data[i]
+                data[i] = (k, v, tangent, tangent)
+            self._data = tuple(data)
 
     def evaluate(self, key):
         # linear search for the first key bigger than the input
