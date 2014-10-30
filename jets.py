@@ -120,11 +120,14 @@ rapier = jetengine("RAPIER atmospheric phase",
 )
 
 class intake(object):
-    def __init__(self, name, drymass, area, capacity):
+    def __init__(self, name, drymass, area, capacity=0.2, drag=0.2, intakeSpeed=10, aoaThreshold=0.1):
         self.name = name
-        self.area = area         # m^2
-        self.capacity = capacity # units
         self.mass = drymass
+        self._area = area         # m^2
+        self._capacity = capacity # units
+        self._intakeSpeed = intakeSpeed # in weird units
+        self._aoaThreshold = aoaThreshold # in cos(AoA)
+        self._drag = drag
 
     def intakeair(self, altitude, v, AoA = 0, options = kerbonormative):
         """
@@ -132,37 +135,39 @@ class intake(object):
         altitude (m) and airspeed (m/s), assuming the given angle 
         of attack (degrees, default 0) and physics deltaT (s, default 0.03)
 
-        The angle of attack must be less than pi/2, otherwise a different
-        formula would hold.
-
         The planet must have oxygen.
         """
         if not options.planet.hasOxygen:
             return 0
 
-        # For low angle of attack, the formula is:
-        #       I = area * airdensity * cos(AoA) * u^2 (6 intakespeed + v)
-        # in t/s ; multiply by 1000 to get kg/s
-        # u is 0.2 for all intakes; named unitscalar in the code.  No idea what
-        # it's about.
+        cosAoA = math.cos(math.radians(AoA))
+        if (cosAoA < self._aoaThreshold):
+            # At high AoA, airspeed is a magic suction
+            speed = self._intakeSpeed
+        else:
+            # Normally, airspeed works out to this.
+            # The speed shown on the right-click for the intake is
+            #   v + self.intakeSpeed
+            # but the speed that goes into computing the airflow is
+            # more complicated for reasons unclear.
+            # The 0.2 here is "unitScalar", same as the 0.2 below.
+            # No idea what it's supposed to be.
+            speed = cosAoA * 0.2 * (6 * self._intakeSpeed + v)
 
         D = options.planet.airdensity(altitude)
-
-        # After folding the u = 0.2, intakespeed = 100, and the *1000, 
-        # this is what we get:
-        air = self.area * D * math.cos(math.radians(AoA)) * 40 * (600 + v)
+        air = D * speed * self._area * 0.2 * 1000 # kg/s
 
         # The intake can hold no more than its capacity at any time step.
         # This means your plane flies better with a smaller deltaT!
-        maxair = self.capacity * 5 / options.deltaT
+        maxair = self._capacity * 5 / options.deltaT
 
         return min(air, maxair)
 
     def dragCoeff(self, v, AoA = 0):
-        val = 0.6 * v * self.area * math.cos(math.radians(AoA))
+        val = 0.6 * v * self._area * math.cos(math.radians(AoA))
         val = max(val, 0)
         val = min(val, 2)
-        return val + 0.3
+        return val + self._drag
 
     def drag(self, altitude, v, AoA = 0, options = kerbonormative):
         """
@@ -181,10 +186,16 @@ class intake(object):
         Cd = self.dragCoeff(v, AoA)
         return options.planet.dragForce(altitude, v, mass, Cd)
 
-ramAirIntake = intake("Ram Air Intake", 0.01, 0.01, 0.2)
-radialIntake = intake("XM-G50 Radial Air Intake", 0.01, 0.004, 1.0)
-circularIntake = intake("Circular Intake", 0.01, 0.008, 0.2)
-nacelleIntake = intake("Engine Nacelle", 0.3, 0.002, 0.2)
+# Updated for 0.24
+# name, mass, area, options
+circularIntake = intake("Circular Intake", 0.01, 0.008, drag=0.3)
+mk1Intake = intake("Mk1 Fuselage - Intake", 0.12, 0.006, capacity=1, intakeSpeed=12)
+nacelleIntake = intake("Engine Nacelle", 0.15, 0.005)
+radialBodyIntake = intake("Radial Engine Body", 0.15, 0.005)
+radialIntake = intake("XM-G50 Radial Air Intake", 0.01, 0.006, capacity=1)
+ramAirIntake = intake("Ram Air Intake", 0.01, 0.01, drag=0.3)
+shockConeIntake = intake("Shock Cone Intake", 0.025, 0.012, capacity=0.8, intakeSpeed=12, drag=0.3)
+structuralIntake = intake("Structural Intake", 0.008, 0.0025, capacity=1)
 
 
 ###########################################################################
