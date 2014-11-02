@@ -39,7 +39,6 @@ class wing(object):
         cosUp = math.cos(math.radians(upDegrees(AoAdegrees)))
         return -cosUp * (1.0 - abs(cosUp)) * cosAoA
 
-    @classmethod
     def deflectionDrag(cls, AoAdegrees):
         return math.sin(math.radians(AoAdegrees))
 
@@ -88,13 +87,28 @@ class controlSurface(wing):
         cosUp = math.cos(math.radians(upDegrees(AoAdegrees)))
         return -cosUp
 
+# Lifting Surfaces include many of the fuel tanks.
+class liftingSurface(wing):
+    def __init__(self, mass, lift, dragMax, dragMin):
+        wing.__init__(self, mass, lift, 1)
+        self.dragMin = dragMin
+        self.dragMax = dragMax
+
+    def deflectionDrag(self, AoAdegrees):
+        sinAoA = math.sin(math.radians(AoAdegrees))
+        return sinAoA * self.dragMax + (1 - sinAoA) * self.dragMin
+
 # stock wings
-deltaWing = wing(0.07, 1.9, 0.6)
 sweptWing = wing(0.05, 1.6, 0.6)
 tailFin = wing(0.02, 0.3, 0.5)
-wingConnector = wing(0.05, 1, 0.4)
-structuralWing = wing(0.05, 1, 0.4)
 avt1 = wing(0.05, 0.3, 0.5)
+wingConnector = wing(0.1, 2, .5)
+wingConnector2 = wing(0.1, 2, .5)
+wingConnector3 = wing(.05, 1, .25)
+wingConnector4 = wing(.025, .5, .12)
+wingConnector5 = wing(.025, .5, .12)
+deltaWing = wing(.1, 2, .6)
+delta_small = wing(.025, .5, .1)
 
 # stock control surfaces
 smallControlSurface = controlSurface(0.01, 0.5, 0.5)
@@ -102,3 +116,28 @@ largeControlSurface = controlSurface(0.04, 0.7, 0.5)
 canard = controlSurface(0.04, 0.7, 0.5)
 avr8 = controlSurface(0.02, 0.4, 0.5)
 deltaDeluxe = controlSurface(0.02, 0.7, 0.6)
+elevon1 = controlSurface(.02, .25, .25)
+elevon2 = controlSurface(.03, .33, .33)
+elevon3 = controlSurface(.04, .5, .5)
+elevon4 = controlSurface(.02, .25, .25)
+elevon5 = controlSurface(.05, .6, .6)
+
+# stock lifting surfaces
+mk2_1m_Bicoupler = liftingSurface(.2, .2, .2, .1)
+mk2_1m_AdapterLong = liftingSurface(.4, .6, .3, .1)
+mk2SpacePlaneAdapter = liftingSurface(.2, .3, .2, .1)
+mk2CargoBayLarge = liftingSurface(.5, .6, .4, .1)
+mk2CargoBaySmall = liftingSurface(.25, .3, .2, .1)
+mk2Cockpit_Inline = liftingSurface(2, .4, .4, .1)
+mk2Cockpit_Standard = liftingSurface(2, .6, .1, .03)
+mk2CrewCabin = liftingSurface(2, .3, .15, .1)
+mk2DockingPort = liftingSurface(.3, .15, .3, .1)
+mk2FuselageLong = liftingSurface(.5, .6, .3, .1)
+mk2FuselageShort = liftingSurface(.25, .3, .15, .1)
+wingStrake = liftingSurface(.025, .75, .2, 0)
+structuralWingA = liftingSurface(0.05, 1, .3, 0)
+structuralWingB = liftingSurface(0.05, 1, .3, 0)
+structuralWingC = liftingSurface(0.025, .5, .15, 0)
+structuralWingD = liftingSurface(0.012, .25, .08, 0)
+sweptWing1 = liftingSurface(0.05, 1, .3, 0)
+sweptWing2 = liftingSurface(0.05, 1, .3, 0)
