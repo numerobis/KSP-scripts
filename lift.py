@@ -39,8 +39,8 @@ class wing(object):
         cosUp = math.cos(math.radians(upDegrees(AoAdegrees)))
         return -cosUp * (1.0 - abs(cosUp)) * cosAoA
 
-    def deflectionDrag(cls, AoAdegrees):
-        return math.sin(math.radians(AoAdegrees))
+    def dragCoeff(cls, AoAdegrees):
+        return math.sin(math.radians(AoAdegrees)) * self.drag
 
     def _liftFactor(self, AoAdegrees, altitude = 0, planet = planet.kerbin):
         return self.deflectionLift(AoAdegrees) * planet.pressure(altitude) * self.lift
@@ -52,7 +52,7 @@ class wing(object):
         return F / self._liftFactor(AoAdegrees, altitude, planet)
 
     def dragForce(self, AoAdegrees, v, altitude = 0, planet = planet.kerbin):
-        Cd = self.deflectionDrag(AoAdegrees) * self.drag
+        Cd = self.dragCoeff(AoAdegrees)
         return planet.dragForce(altitude, v, self.mass, Cd)
 
     def forceVector(self, flightPitch, AoA, v, altitude = 0, planet = planet.kerbin):
@@ -94,9 +94,43 @@ class liftingSurface(wing):
         self.dragMin = dragMin
         self.dragMax = dragMax
 
-    def deflectionDrag(self, AoAdegrees):
+    def dragCoeff(self, AoAdegrees):
         sinAoA = math.sin(math.radians(AoAdegrees))
         return sinAoA * self.dragMax + (1 - sinAoA) * self.dragMin
+
+
+# For design, compare two lifting surfaces
+def compare(srf1, srf2, AoAdegrees=30, quiet=False):
+    """
+    compare(srf1, srf2)
+
+    Scale srf2 to have equal mass, and compare the lift and drag.
+    Returns a tuple
+            (#srf2 to make the mass of one srf1,
+             ratio of scaled srf2:srf1 lift,
+             ratio of scaled srf2:srf1 drag)
+
+    Set AoAdegrees to the angle you want, 30 is the default.
+    Set quiet=False to turn off printing.
+    """
+    def div(a, b):
+        if a == 0 and b == 0:
+            return 1
+        if b == 0:
+            return float('inf')
+        return a/b
+
+    num2 = srf1.mass / srf2.mass
+    lift1 = srf1.liftForce(AoAdegrees, 1)
+    lift2 = num2 * srf2.liftForce(AoAdegrees, 1)
+    drag1 = srf1.dragForce(AoAdegrees, 1)
+    drag2 = num2 * srf2.dragForce(AoAdegrees, 1)
+
+    retval = (num2, div(lift2, lift1), div(drag2, drag1))
+    if not quiet:
+        print (("Use %g of the latter for each of the former.\n"
+               + "Lift is %gx ; drag is %gx.\n") % retval)
+    return retval
 
 # stock wings
 sweptWing = wing(0.05, 1.6, 0.6)
