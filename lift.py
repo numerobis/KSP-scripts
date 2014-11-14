@@ -39,7 +39,7 @@ class wing(object):
         cosUp = math.cos(math.radians(upDegrees(AoAdegrees)))
         return -cosUp * (1.0 - abs(cosUp)) * cosAoA
 
-    def dragCoeff(cls, AoAdegrees):
+    def dragCoeff(self, AoAdegrees):
         return math.sin(math.radians(AoAdegrees)) * self.drag
 
     def _liftFactor(self, AoAdegrees, altitude = 0, planet = planet.kerbin):
@@ -72,6 +72,11 @@ class wing(object):
         (liftX, liftY) = (lift * math.cos(liftAngle), lift * math.sin(liftAngle))
         (dragX, dragY) = (drag * math.cos(dragAngle), drag * math.sin(dragAngle))
         return (liftX + dragX, liftY + dragY)
+
+    def liftDragRatio(self, AoAdegrees, v):
+        lift = self.liftForce(AoAdegrees, v)
+        drag = self.dragForce(AoAdegrees, v)
+        return lift / drag
 
 
 # Control surfaces include most of the winglets, the control surfaces, and
@@ -132,6 +137,7 @@ def compare(srf1, srf2, AoAdegrees=30, quiet=False):
                + "Lift is %gx ; drag is %gx.\n") % retval)
     return retval
 
+
 # stock wings
 sweptWing = wing(0.05, 1.6, 0.6)
 tailFin = wing(0.02, 0.3, 0.5)
@@ -144,9 +150,20 @@ wingConnector5 = wing(.025, .5, .12)
 deltaWing = wing(.1, 2, .6)
 delta_small = wing(.025, .5, .1)
 
+wings = [
+    sweptWing,
+    tailFin,
+    avt1,
+    wingConnector,
+    wingConnector2,
+    wingConnector3,
+    wingConnector4,
+    wingConnector5,
+    deltaWing,
+    delta_small
+]
+
 # stock control surfaces
-smallControlSurface = controlSurface(0.01, 0.5, 0.5)
-largeControlSurface = controlSurface(0.04, 0.7, 0.5)
 canard = controlSurface(0.04, 0.7, 0.5)
 avr8 = controlSurface(0.02, 0.4, 0.5)
 deltaDeluxe = controlSurface(0.02, 0.7, 0.6)
@@ -155,6 +172,17 @@ elevon2 = controlSurface(.03, .33, .33)
 elevon3 = controlSurface(.04, .5, .5)
 elevon4 = controlSurface(.02, .25, .25)
 elevon5 = controlSurface(.05, .6, .6)
+
+controlSurfaces = [
+    canard,
+    avr8,
+    deltaDeluxe,
+    elevon1,
+    elevon2,
+    elevon3,
+    elevon4,
+    elevon5,
+]
 
 # stock lifting surfaces
 mk2_1m_Bicoupler = liftingSurface(.2, .2, .2, .1)
@@ -175,3 +203,24 @@ structuralWingC = liftingSurface(0.025, .5, .15, 0)
 structuralWingD = liftingSurface(0.012, .25, .08, 0)
 sweptWing1 = liftingSurface(0.05, 1, .3, 0)
 sweptWing2 = liftingSurface(0.05, 1, .3, 0)
+
+liftingSurfaces = [
+    mk2_1m_Bicoupler,
+    mk2_1m_AdapterLong,
+    mk2SpacePlaneAdapter,
+    mk2CargoBayLarge,
+    mk2CargoBaySmall,
+    mk2Cockpit_Inline,
+    mk2Cockpit_Standard,
+    mk2CrewCabin,
+    mk2DockingPort,
+    mk2FuselageLong,
+    mk2FuselageShort,
+    wingStrake,
+    structuralWingA,
+    structuralWingB,
+    structuralWingC,
+    structuralWingD,
+    sweptWing1,
+    sweptWing2,
+]

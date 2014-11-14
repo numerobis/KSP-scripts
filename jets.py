@@ -40,11 +40,13 @@ laythenormative = standardoptions(planet.laythe)
 class jetengine(object):
     def __init__(self, 
             name,
+            partName,
             ispCurve,   # key-value pairs
             thrustCurve,# key-value pairs
             maxthrust,
             mass): # kN
         self.name        = name
+        self.partName    = partName
         self.ispCurve    = ispCurve
         self.thrustCurve = thrustCurve
         self.maxthrust   = maxthrust
@@ -81,7 +83,7 @@ class jetengine(object):
         # Fuel:air is 1:15, so we need 1/15 of the amount of air we need.
         return self.airRequired(altitude, throttle, options) / 15.0
 
-turbojet = jetengine("TurboJet Engine",
+turbojet = jetengine("TurboJet Engine", "turboFanEngine",
     AnimationCurve((
         (0, 1200),
         (0.3, 2500),
@@ -95,7 +97,7 @@ turbojet = jetengine("TurboJet Engine",
     1.2 # mass
 )
 
-basicjet = jetengine("Basic Jet Engine",
+basicjet = jetengine("Basic Jet Engine", 'JetEngine',
     AnimationCurve((
         (0, 1000),
         (0.3, 1800),
@@ -108,7 +110,7 @@ basicjet = jetengine("Basic Jet Engine",
     1 # mass
 )
 
-rapier = jetengine("RAPIER atmospheric phase",
+rapier = jetengine("RAPIER atmospheric phase", 'RAPIER',
     turbojet.ispCurve,
     AnimationCurve((
         (0, 0.5, 0, 0), 
@@ -119,9 +121,12 @@ rapier = jetengine("RAPIER atmospheric phase",
     1.75
 )
 
+engines = [ basicjet, turbojet, rapier ]
+
 class intake(object):
-    def __init__(self, name, drymass, area, capacity=0.2, drag=0.2, intakeSpeed=10, aoaThreshold=0.1):
+    def __init__(self, name, partName, drymass, area, capacity=0.2, drag=0.2, intakeSpeed=10, aoaThreshold=0.1):
         self.name = name
+        self.partName = partName
         self.mass = drymass
         self._area = area         # m^2
         self._capacity = capacity # units
@@ -186,16 +191,27 @@ class intake(object):
         Cd = self.dragCoeff(v, AoA)
         return options.planet.dragForce(altitude, v, mass, Cd)
 
-# Updated for 0.24
+# Updated for 0.25
 # name, mass, area, options
-circularIntake = intake("Circular Intake", 0.01, 0.008, drag=0.3)
-mk1Intake = intake("Mk1 Fuselage - Intake", 0.12, 0.006, capacity=1, intakeSpeed=12)
-nacelleIntake = intake("Engine Nacelle", 0.15, 0.005)
-radialBodyIntake = intake("Radial Engine Body", 0.15, 0.005)
-radialIntake = intake("XM-G50 Radial Air Intake", 0.01, 0.006, capacity=1)
-ramAirIntake = intake("Ram Air Intake", 0.01, 0.01, drag=0.3)
-shockConeIntake = intake("Shock Cone Intake", 0.025, 0.012, capacity=0.8, intakeSpeed=12, drag=0.3)
-structuralIntake = intake("Structural Intake", 0.008, 0.0025, capacity=1)
+circularIntake = intake("Circular Intake", 'CircularIntake', 0.01, 0.008, drag=0.3)
+mk1Intake = intake("Mk1 Fuselage - Intake", 'MK1IntakeFuselage', 0.12, 0.006, capacity=1, intakeSpeed=12)
+nacelleIntake = intake("Engine Nacelle", 'nacelleBody', 0.15, 0.005)
+radialBodyIntake = intake("Radial Engine Body", 'radialEngineBody', 0.15, 0.005)
+radialIntake = intake("XM-G50 Radial Air Intake", 'airScoop', 0.01, 0.006, capacity=1)
+ramAirIntake = intake("Ram Air Intake", 'ramAirIntake', 0.01, 0.01, drag=0.3)
+shockConeIntake = intake("Shock Cone Intake", 'shockConeIntake', 0.025, 0.012, capacity=0.8, intakeSpeed=12, drag=0.3)
+structuralIntake = intake("Structural Intake", 'IntakeRadialLong', 0.008, 0.0025, capacity=1)
+
+intakes = [
+    circularIntake,
+    mk1Intake,
+    nacelleIntake,
+    radialBodyIntake,
+    radialIntake,
+    ramAirIntake,
+    shockConeIntake,
+    structuralIntake,
+]
 
 
 ###########################################################################
