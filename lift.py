@@ -28,7 +28,8 @@ def upDegrees(AoAdegrees):
 # They are part = winglet in their part.cfg (but only one of the winglets
 # matches it, so I renamed to wing for clarity).
 class wing(object):
-    def __init__(self, mass, lift, drag):
+    def __init__(self, name, mass, lift, drag):
+        self.name = name
         self.mass = mass
         self.lift = lift
         self.drag = drag
@@ -84,8 +85,8 @@ class wing(object):
 # Most of the code is shared with the Winglet class, so I derive from its
 # counterpart here.
 class controlSurface(wing):
-    def __init__(self, mass, lift, drag):
-        wing.__init__(self, mass, lift, drag)
+    def __init__(self, name, mass, lift, drag):
+        wing.__init__(self, name, mass, lift, drag)
 
     @classmethod
     def deflectionLift(cls, AoAdegrees):
@@ -94,8 +95,8 @@ class controlSurface(wing):
 
 # Lifting Surfaces include many of the fuel tanks.
 class liftingSurface(wing):
-    def __init__(self, mass, lift, dragMax, dragMin):
-        wing.__init__(self, mass, lift, 1)
+    def __init__(self, name, mass, lift, dragMax, dragMin):
+        wing.__init__(self, name, mass, lift, 1)
         self.dragMin = dragMin
         self.dragMax = dragMax
 
@@ -133,22 +134,22 @@ def compare(srf1, srf2, AoAdegrees=30, quiet=False):
 
     retval = (num2, div(lift2, lift1), div(drag2, drag1))
     if not quiet:
-        print (("Use %g of the latter for each of the former.\n"
+        print (("Use %g " + srf1.name + " for each " + srf2.name + ".\n"
                + "Lift is %gx ; drag is %gx.\n") % retval)
     return retval
 
 
 # stock wings
-sweptWing = wing(0.05, 1.6, 0.6)
-tailFin = wing(0.02, 0.3, 0.5)
-avt1 = wing(0.05, 0.3, 0.5)
-wingConnector = wing(0.1, 2, .5)
-wingConnector2 = wing(0.1, 2, .5)
-wingConnector3 = wing(.05, 1, .25)
-wingConnector4 = wing(.025, .5, .12)
-wingConnector5 = wing(.025, .5, .12)
-deltaWing = wing(.1, 2, .6)
-delta_small = wing(.025, .5, .1)
+sweptWing = wing("Swept Wings", 0.05, 1.6, 0.6)
+tailFin = wing("Tail Fin", 0.02, 0.3, 0.5)
+avt1 = wing("AV-T1 Winglet", 0.05, 0.3, 0.5)
+wingConnector = wing("Wing Connector A", 0.1, 2, .5)
+wingConnector2 = wing("Wing Connector B", 0.1, 2, .5)
+wingConnector3 = wing("Wing Connector C", .05, 1, .25)
+wingConnector4 = wing("Wing Connector D", .025, .5, .12)
+wingConnector5 = wing("Wing Connector E", .025, .5, .12)
+deltaWing = wing("Delta Wing", .1, 2, .6)
+delta_small = wing("Small Delta Wing", .025, .5, .1)
 
 wings = [
     sweptWing,
@@ -164,14 +165,14 @@ wings = [
 ]
 
 # stock control surfaces
-canard = controlSurface(0.04, 0.7, 0.5)
-avr8 = controlSurface(0.02, 0.4, 0.5)
-deltaDeluxe = controlSurface(0.02, 0.7, 0.6)
-elevon1 = controlSurface(.02, .25, .25)
-elevon2 = controlSurface(.03, .33, .33)
-elevon3 = controlSurface(.04, .5, .5)
-elevon4 = controlSurface(.02, .25, .25)
-elevon5 = controlSurface(.05, .6, .6)
+canard = controlSurface("Canard", 0.04, 0.7, 0.5)
+avr8 = controlSurface("AV-R8", 0.02, 0.4, 0.5)
+deltaDeluxe = controlSurface("Delta-Deluxe", 0.02, 0.7, 0.6)
+elevon1 = controlSurface("Elevon 1", .02, .25, .25)
+elevon2 = controlSurface("Elevon 2", .03, .33, .33)
+elevon3 = controlSurface("Elevon 3", .04, .5, .5)
+elevon4 = controlSurface("Elevon 4", .02, .25, .25)
+elevon5 = controlSurface("Elevon 5", .05, .6, .6)
 
 controlSurfaces = [
     canard,
@@ -185,24 +186,23 @@ controlSurfaces = [
 ]
 
 # stock lifting surfaces
-mk2_1m_Bicoupler = liftingSurface(.2, .2, .2, .1)
-mk2_1m_AdapterLong = liftingSurface(.4, .6, .3, .1)
-mk2SpacePlaneAdapter = liftingSurface(.2, .3, .2, .1)
-mk2CargoBayLarge = liftingSurface(.5, .6, .4, .1)
-mk2CargoBaySmall = liftingSurface(.25, .3, .2, .1)
-mk2Cockpit_Inline = liftingSurface(2, .4, .4, .1)
-mk2Cockpit_Standard = liftingSurface(2, .6, .1, .03)
-mk2CrewCabin = liftingSurface(2, .3, .15, .1)
-mk2DockingPort = liftingSurface(.3, .15, .3, .1)
-mk2FuselageLong = liftingSurface(.5, .6, .3, .1)
-mk2FuselageShort = liftingSurface(.25, .3, .15, .1)
-wingStrake = liftingSurface(.025, .75, .2, 0)
-structuralWingA = liftingSurface(0.05, 1, .3, 0)
-structuralWingB = liftingSurface(0.05, 1, .3, 0)
-structuralWingC = liftingSurface(0.025, .5, .15, 0)
-structuralWingD = liftingSurface(0.012, .25, .08, 0)
-sweptWing1 = liftingSurface(0.05, 1, .3, 0)
-sweptWing2 = liftingSurface(0.05, 1, .3, 0)
+mk2_1m_Bicoupler = liftingSurface("Mk2 Bicoupler", .2, .2, .2, .1)
+mk2_1m_AdapterLong = liftingSurface("Mk2 to 1.25m Adapter Long", .4, .6, .3, .1)
+mk2SpacePlaneAdapter = liftingSurface("mk2 to 1.25m Adapter", .2, .3, .2, .1)
+mk2CargoBayLarge = liftingSurface("Mk2 cargo (large)", .5, .6, .4, .1)
+mk2CargoBaySmall = liftingSurface("Mk2 cargo (small)", .25, .3, .2, .1)
+mk2Cockpit_Inline = liftingSurface("Mk2 Inline Cockpit", 2, .4, .4, .1)
+mk2Cockpit_Standard = liftingSurface("Mk2 Cockpit", 2, .6, .1, .03)
+mk2CrewCabin = liftingSurface("Mk2 Crew Cabin", 2, .3, .15, .1)
+mk2DockingPort = liftingSurface("Mk2 Clamp-O-Tron", .3, .15, .3, .1)
+mk2FuselageLong = liftingSurface("Mk2 Fuselage (long)", .5, .6, .3, .1)
+mk2FuselageShort = liftingSurface("Mk2 Fuselage (short)", .25, .3, .15, .1)
+wingStrake = liftingSurface("Wing Strake", .025, .75, .2, 0)
+structuralWingA = liftingSurface("Structural Wing A", 0.05, 1, .3, 0)
+structuralWingB = liftingSurface("Structural Wing B", 0.05, 1, .3, 0)
+structuralWingC = liftingSurface("Structural Wing C", 0.025, .5, .15, 0)
+structuralWingD = liftingSurface("Structural Wing D", 0.012, .25, .08, 0)
+sweptWing12 = liftingSurface("Swept Wing Type A/B", 0.05, 1, .3, 0)
 
 liftingSurfaces = [
     mk2_1m_Bicoupler,
@@ -221,6 +221,5 @@ liftingSurfaces = [
     structuralWingB,
     structuralWingC,
     structuralWingD,
-    sweptWing1,
-    sweptWing2,
+    sweptWing12,
 ]
