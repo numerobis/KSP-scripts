@@ -5,33 +5,48 @@ import planet
 import math
 import jets
 
+# what kind of rocket, intake, and lift surface will you use?
+rocket = engine.getEngine('lv-909')
+intake = jets.radialIntake
+liftSurface = lift.deltaDeluxe
+jetBeta = 6 # fuel : tank ratio, 6 for the Mk2 tanks
+rocketBeta = 8 # fuel : tank, 8 for the old stock tanks
+
 class Phase(object):
     def __init__(self, name, deltaV, motor):
         self._name = name
         self._deltaV = deltaV
         if isinstance(motor, engine.engine):
             self._Isp = motor.IspVac
-            self._beta = 8
+            self._isJet = False
         else:
             # it's a jet!
             self._Isp = 10000
-            self._beta = 4
+            self._isJet = True
 
     def evaluate(self, payload):
         (prop, tanks) = engine.burnMass(self._deltaV, self._Isp, 
-                payload, self._beta)
-        if self._beta == 4:
+                payload, jetBeta if self._isJet else rocketBeta)
+        if self._isJet:
             return (prop, tanks, 0)
         else:
             return (prop, 0, tanks)
 
-lvn = engine.getEngine('lv-n')
+    def isJet(self):
+        return self._isJet
+
+    def beta(self):
+        if self._isJet:
+            return jetBeta
+        else:
+            return rocketBeta
+
 phases = (
         Phase("KSC-LKO", 6000, jets.turbojet),
-        Phase("LKO circ", 30, lvn),
-        Phase("LKO-Jool", 2100, lvn),
+        Phase("LKO circ", 30, rocket),
+        Phase("LKO-Jool", 2100, rocket),
         Phase("Laythe-LLO", 3000, jets.turbojet),
-        Phase("LLO-Kerbin", 1100, lvn)
+        Phase("LLO-Kerbin", 1100, rocket)
 )
 
 class Stage(object):
@@ -56,51 +71,38 @@ def evaluateStages(payload, index):
 def reportLiftoffSpeed(name, mass, planet, altitude):
     liftForceNeeded = planet.gravity(altitude) * mass
     takeoffLift = liftForceNeeded  / nlift
-    liftoffSpeed = lift.smallControlSurface.speedForLift(liftSurfaceAoA, takeoffLift, altitude, planet)
+    liftoffSpeed = liftSurface.speedForLift(liftSurfaceAoA, takeoffLift, altitude, planet)
     print("%s speed %g m/s" % (name, liftoffSpeed))
 
 
 nintakes = 0
 nlift = 0
-nturbo = 2
+nturbo = 1
 takeoffSpeed = 60
 runwayAltitude = 70
 liftSurfaceAoA = 60
 
 fixedPayload = sum( (
-            0.08, # nose cone science
-            0.05, # nose cone adapter
-            3.5, # cockpit
-            3.5, # lab
-            6 * 0.005, # antenna and sensors and ladder
-            0.2, # mat bay
-            0.15, # goo
-            5 * 0.005, # redundant fixed solar panels (front/back/bottom/top-left/top-right)
-            3 * 2.5, # habs
-            lvn.mass,
-            2 * 0.05, # rover wheels
-            (2 + # canard
-             2 + # ailerons
-             4)  # elevator and rudder
-            * lift.smallControlSurface.mass
+            7.960, # cockpits, lab, etc
+            2 * rocket.mass,
+            6 * lift.avr8.mass, # 2 each for roll/yaw/pitch
             ))
 
 for i in range(1, 10):
     payload = sum( (
                 fixedPayload,
                 nturbo * jets.turbojet.mass, # turbojets
-                nintakes * jets.ramAirIntake.mass, # intakes
-                nlift * lift.smallControlSurface.mass, # small control surfaces tilted 90 down
+                nintakes * intake.mass, # intakes
+                nlift * liftSurface.mass,
                 ))
     stages = list(reversed(evaluateStages(payload, 0)))
     launchMass = stages[0].mass
 
     needLiftForce = launchMass * planet.kerbin.gravity(runwayAltitude)
-    liftPerSCS = lift.smallControlSurface.liftForce(liftSurfaceAoA, takeoffSpeed, runwayAltitude)
+    liftPerSCS = liftSurface.liftForce(liftSurfaceAoA, takeoffSpeed, runwayAltitude)
     newNcontrol = math.ceil(needLiftForce / liftPerSCS)
 
-
-    parts = ((jets.turbojet, nturbo), (jets.ramAirIntake, nintakes))
+    parts = ((jets.turbojet, nturbo), (intake, nintakes))
     newNintakes = nintakes + jets.intakesForSpeed(
             parts,
             launchMass,
@@ -116,25 +118,25 @@ for i in range(1, 10):
         break
 
 print ("payload %g, launch mass %g" % (fixedPayload, launchMass))
-print ("%d turbojets, %d intakes, %d small control surfaces pointed %g degrees down"
+print ("%d turbojets, %d intakes, %d lift surfaces pointed %g degrees down"
         % (nturbo, nintakes, nlift, liftSurfaceAoA))
 
 jetTanks = sum( [ x.jetTanks for x in stages ] )
 rocketTanks = sum( [ x.rocketTanks for x in stages ] )
-print ("%gt rocket fuel and %gt jet fuel" % (rocketTanks * 8, jetTanks * 4))
+print ("%gt rocket fuel and %gt jet fuel" % (rocketTanks * rocketBeta, jetTanks * jetBeta))
 print ("%g U LiquidFuel, %g U Oxidizer" % (
-            (rocketTanks * 8 * 0.9 + jetTanks * 4) * 200,
-            (rocketTanks * 8 * 1.1) * 200))
+            (rocketTanks * rocketBeta * 0.9 + jetTanks * jetBeta) * 200,
+            (rocketTanks * rocketBeta * 1.1) * 200))
 for (phase, stage) in zip(phases, stages):
     name = phase._name
-    if phase._beta == 4:
+    if phase.isJet():
         fuelName = 'jet'
         tankMass = stage.jetTanks
     else:
         fuelName = 'rocket'
         tankMass = stage.rocketTanks
     startMass = stage.mass
-    fuelMass = phase._beta * tankMass
+    fuelMass = phase.beta() * tankMass
     fuelUnits = fuelMass * 200
     print ("%10s:  %7.3f t %s fuel (%g units)" %
             (name, fuelMass, fuelName, fuelUnits))
