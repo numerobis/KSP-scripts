@@ -53,6 +53,13 @@ class planet(object):
 
     def __str__(self): return self.name
 
+    def mass(self):
+        """
+        Planetary mass, in kg.
+        """
+        G = 6.673e-11
+        return self.mu / G
+
     def gravity(self, altitude = 0):
         """
         Return the gravitational acceleration at a given altitude above the
@@ -62,6 +69,13 @@ class planet(object):
         """
         r = self.radius + altitude
         return self.mu / (r*r)
+
+    def siderealSpeed(self, altitude = 0):
+        """
+        If we're immobile on the ground at the given altitude, what's
+        our orbit speed?
+        """
+        return 2 * pi * (self.radius + altitude) / self.siderealPeriod
 
     def orbitalVelocity(self, altitude):
         """
