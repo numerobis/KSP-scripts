@@ -56,6 +56,13 @@ class jetengine(object):
         pressure = options.planet.pressure(altitude)
         return self.ispCurve.evaluate(pressure)
 
+    def effectiveIsp(self, altitude, v, options = kerbonormative):
+        isp = self.Isp(altitude, options)
+        t = self.thrust(v) * 1000
+        mdot = self.fuelRequired(altitude, options = options)
+        ve = t / mdot
+        return ve / g0
+
     def thrust(self, v):
         """
         Return the thrust (kN) provided by the jet at the given speed.
@@ -168,6 +175,18 @@ class intake(object):
 
         return min(air, maxair)
 
+    def massIncludingAir(self, altitude, v, AoA = 0, options = kerbonormative):
+        """
+        Return the mass of the intake, including
+        the air it will collect this round.
+        """
+        # intakeair is kg/s, but the amount we currently have in the intake
+        # is the amount we gather in one timestep.  And we need it in tonnes,
+        # not kg.
+        airkgpers = self.intakeair(altitude, v, AoA, options=options)
+        airtonnes = 0.001 * options.deltaT * airkgpers
+        return self.mass + airtonnes
+
     def dragCoeff(self, v, AoA = 0):
         val = 0.6 * v * self._area * math.cos(math.radians(AoA))
         val = max(val, 0)
@@ -181,13 +200,7 @@ class intake(object):
         """
         # The total mass is the dry mass of the intake, plus the mass of the
         # air in the intake!  This actually matters at low altitude.
-
-        # intakeair is kg/s, but the amount we currently have in the intake
-        # is the amount we gather in one timestep.  And we need it in tonnes,
-        # not kg.
-        airkgpers = self.intakeair(altitude, v, AoA, options=options)
-        airtonnes = 0.001 * options.deltaT * airkgpers
-        mass = self.mass + airtonnes
+        mass = self.massIncludingAir(altitude, v, AoA, options=options)
         Cd = self.dragCoeff(v, AoA)
         return options.planet.dragForce(altitude, v, mass, Cd)
 
