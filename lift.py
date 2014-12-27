@@ -43,23 +43,22 @@ class wing(object):
     def dragCoeff(self, AoAdegrees):
         return math.sin(math.radians(AoAdegrees)) * self.drag
 
-    def _liftFactor(self, AoAdegrees, altitude = 0, planet = planet.kerbin):
-        return self.deflectionLift(AoAdegrees) * planet.pressure(altitude) * self.lift
+    def liftCoeff(self, AoAdegrees):
+        return self.deflectionLift(AoAdegrees) * self.lift
 
     def liftForce(self, AoAdegrees, v, altitude = 0, planet = planet.kerbin):
-        return v * self._liftFactor(AoAdegrees, altitude, planet)
-
-    def speedForLift(self, AoAdegrees, F, altitude = 0, planet = planet.kerbin):
-        return F / self._liftFactor(AoAdegrees, altitude, planet)
+        return v * planet.pressure(altitude) * self.liftCoeff(AoAdegrees)
 
     def dragForce(self, AoAdegrees, v, altitude = 0, planet = planet.kerbin):
         Cd = self.dragCoeff(AoAdegrees)
         return planet.dragForce(altitude, v, self.mass, Cd)
 
-    def forceVector(self, flightPitch, AoA, v, altitude = 0, planet = planet.kerbin):
+    def forceVector(self, flightPitch, AoA, v, altitude = 0, planet = planet.kerbin, includeGravity = False):
         """
         Returns (x, y) forces due to the airfoil.
         Includes drag, lift, and the parasitic drag due to lift.
+        If includeGravity is set, also includes apparent gravity (taking into
+        account centrifugal effects).
 
         flightPitch: angle of velocity vector relative to the surface (degrees)
         AoA: angle of the airfoil relative to the velocity vector (degrees)
@@ -72,13 +71,22 @@ class wing(object):
 
         (liftX, liftY) = (lift * math.cos(liftAngle), lift * math.sin(liftAngle))
         (dragX, dragY) = (drag * math.cos(dragAngle), drag * math.sin(dragAngle))
-        return (liftX + dragX, liftY + dragY)
+        if not includeGravity:
+            return (liftX + dragX, liftY + dragY)
+
+        # now compute apparent gravity
+        vOrbital = planet.orbitalVelocity(altitude)
+        vSrfHorizontal = math.cos(math.radians(flightPitch)) * v
+        vOrbHorizontal = vSrfHorizontal + planet.siderealSpeed(altitude)
+        gravityAccel = planet.gravity(altitude)
+        centrifugeAccel = vOrbHorizontal * vOrbHorizontal / (vOrbital * vOrbital)
+        apparentGravityForce = (centrifugeAccel - gravityAccel) * self.mass
+        return (liftX + dragX, liftY + dragY + apparentGravityForce)
 
     def liftDragRatio(self, AoAdegrees, v):
         lift = self.liftForce(AoAdegrees, v)
         drag = self.dragForce(AoAdegrees, v)
         return lift / drag
-
 
 # Control surfaces include most of the winglets, the control surfaces, and
 # the canards.  They have ModuleControlSurface.
@@ -138,6 +146,32 @@ def compare(srf1, srf2, AoAdegrees=30, quiet=False):
                + "Lift is %gx ; drag is %gx.\n") % retval)
     return retval
 
+def speedForLift(F, liftSurfaces = [], AoAdegrees = 0, altitude = 0, planet = planet.kerbin):
+    """
+    Return the speed we need to go in order to get a given lift force.
+    Useful to figure out the liftoff speed of a plane.
+    F is in kN
+    liftSurfaces is a list of triples (n, liftType, AoA) with AoA being relative to your craft.
+        - you can elide n to mean 1, or elide AoA to mean 0
+    """
+    coeff = 0
+    for item in liftSurfaces:
+        if item is wing:
+            coeff += item.liftCoeff(AoAdegrees)
+        else:
+            try:
+                (n, x, AoA) = item
+                coeff += n * x.liftCoeff(AoA + AoAdegrees)
+            except:
+                try:
+                    (n, x) = item
+                    coeff += n * x.liftCoeff(AoAdegrees)
+                except:
+                    # last-ditch; this may throw
+                    (x, AoA) = item
+                    coeff += x.liftCoeff(AoA + AoAdegrees)
+    # coeff is the lift coefficient of the whole craft
+    return F / (coeff * planet.pressure(altitude))
 
 # stock wings
 sweptWing = wing("Swept Wings", 0.05, 1.6, 0.6)
