@@ -105,33 +105,40 @@ class ship(object):
         stream.write("%d engine types\n" % len(self.engines))
         for eType, eList in self.engines.iteritems():
             stream.write("  %d %s\n" % (len(eList), eType.name))
-        stream.write("%d intakes\n" % len(self.engines))
+        stream.write("%d intakes\n" % len(self.intakes))
         for iType, iList in self.intakes.iteritems():
             stream.write("  %d %s\n" % (len(iList), iType.name))
 
 
     def reorder(self):
-        if len(self.engines) != 1:
-          # don't reorder.  Nothing to reorder if 0, I don't do it well if >=2.
-          return self.allParts
-
         # dump in all the other parts first.
         parts = [ x for x in self.otherParts ]
 
-        # Iterate to get the one key/value pair.
-        for eType, eList in self.engines.iteritems():
-          # for each engine, set up a list of parts
-          numEngines = len(eList)
-          partsByEngine = [ [x] for x in eList ]
-          for iType, iList in self.intakes.iteritems():
-            numIntakes = len(iList)
-            for i, intake in enumerate(iList):
-                # allocate intakes in round-robin
-                partsByEngine[i % numEngines].append(intake)
-          # add each engine and its intakes to the parts list.
-          # make sure to reverse the order, so the intakes go before the engine
-          for eParts in partsByEngine:
-            parts.extend(reversed(eParts))
+        # Iterate to get the last key/value pair, or the turbojets.
+        for jettype in self.engines:
+          if jettype == jets.turbojet:
+            break
+        jetlist = self.engines[jettype]
+
+        # for each engine, set up a list of parts
+        numEngines = len(jetlist)
+        partsByEngine = [ [x] for x in jetlist ]
+        for iType, iList in self.intakes.iteritems():
+          numIntakes = len(iList)
+          for i, intake in enumerate(iList):
+              # allocate intakes in round-robin
+              partsByEngine[i % numEngines].append(intake)
+
+        # add each engine and its intakes to the parts list.
+        # make sure to reverse the order, so the intakes go before the engine
+        for eParts in partsByEngine:
+          parts.extend(reversed(eParts))
+
+        # add all the other engines to the parts list (if any), ordered by type
+        for t in self.engines:
+          if t != jettype:
+            parts.extend(self.engines[t])
+
         return parts
 
 for name in sys.argv[1:]:
