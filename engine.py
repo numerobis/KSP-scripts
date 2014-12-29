@@ -149,6 +149,19 @@ def propellantMassBurned(deltaV, Isp, m1):
     # mprop = m1 (1 - 1/alpha)
     return m1 * (1 - 1.0 / alpha(deltaV, Isp))
 
+def payloadAllowance(deltaV, Isp, mprop):
+    """
+    Say we burn mprop tonnes of fuel in a burn that achieves deltaV m/s,
+    using an engine of the given Isp.
+
+    What's the payload?
+    """
+    # m1 = m0 alpha
+    # mprop = m1 - m0
+    # mprop = m0 alpha - m0
+    # m0 = mprop / (alpha - 1)
+    return mprop / (alpha(deltaV, Isp) - 1.0)
+
 def burnMass(deltaV, Isp, m0, b = beta):
     """
     Return the mass of propellant and tanks that we'll need to burn.
@@ -180,6 +193,7 @@ def burnMass(deltaV, Isp, m0, b = beta):
     tankMass = m0 * (a - 1) / (1 - a + b)
     propMass = tankMass * b
     return (propMass, tankMass)
+
 
 
 def burnTimeForPayload(deltaV, Isp, thrust, m0):
