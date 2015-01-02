@@ -34,6 +34,28 @@ def quadratic(a, b, c):
     a2 = 2 * a
     return ( (-b + sqrtdiscriminant) / a2, (-b - sqrtdiscriminant) / a2)
 
+class vector(object):
+    def __init__(self, *v):
+        self.v = tuple(v)
+
+    def L2(self):
+        return math.sqrt(self.sqrMagnitude())
+
+    def sqrMagnitude(self):
+        return sum(x*x for x in self.v)
+
+    def dot(self, b):
+        return sum(x*y for x,y in zip(self.v, b.v))
+
+    def scale(self, a):
+        return vector(*[a * x for x in self.v])
+
+    def add(self, a):
+        return vector(*[x + y for x,y in zip(self.v, a.v)])
+
+    def __getitem__(self, i):
+        return self.v[i]
+
 def L2(vector):
     return math.sqrt(sum(x*x for x in vector))
 

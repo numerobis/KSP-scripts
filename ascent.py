@@ -32,6 +32,8 @@ class simulation(object):
         """
         Return the new position, velocity, and acceleration
         given the thrust vector.
+
+        Angle is in radians.
         """
         thrustAccel = self._polarToCartesian(self.thrust / self.mass, thrustAngle)
 
@@ -41,6 +43,17 @@ class simulation(object):
         p1 = self.p.add(v1.scale(self.deltaT))
 
         return (p1, v1, a)
+
+    def _isValidThrustAngle(self, angle):
+        """
+        Is the thrust angle valid given the altitude curve?
+
+        Angle is in radians.
+        """
+        (p, v, a) = self._updatePosition(angle)
+        r2New = p.sqrMagnitude()
+        r2Old = self.p.sqrMagnitude()
+        return r2New >= r2Old
 
     def optimizeThrustAngle(self, tolerance = 1e-6):
         """
@@ -60,23 +73,17 @@ class simulation(object):
 
         minAngle = horizontalAngle
         maxAngle = verticalAngle
-        rOld = self.p.L2()
-
-        def isValid(angle):
-            (p, v, a) = self._updatePosition(angle)
-            rNew = p.L2()
-            return rNew >= rOld
 
         # Try horizontal and vertical first.
-        if not isValid(maxAngle):
+        if not self._isValidThrustAngle(maxAngle):
             raise "Insufficient thrust"
-        if isValid(minAngle):
+        if self._isValidThrustAngle(minAngle):
             return minAngle
 
         # Now, binary search.
         while maxAngle - minAngle > 1e-6:
             angle = 0.5 * (maxAngle + minAngle)
-            if isValid(angle):
+            if self._isValidThrustAngle(angle):
                 maxAngle = angle
             else:
                 minAngle = angle
