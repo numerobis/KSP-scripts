@@ -39,10 +39,11 @@ class WeakEngineException(Exception):
 
 class engine(object):
     def __init__(self, name, IspAtm, IspVac, mass, thrust,
-            vectoring = False, radial = False, large = False):
+            vectoring = False, radial = False, large = False, fuel="liquid"):
         self.name = name
         self.IspAtm = IspAtm        # seconds
         self.IspVac = IspVac        # seconds
+        self.fuel = fuel            # "liquid" or "solid"
         self.mass = mass            # tonnes
         self.thrust = thrust        # kN
         self.vectoring = vectoring  # true or false
@@ -67,40 +68,33 @@ class engine(object):
     def __str__(self):
         return self.name
 
-# We have a none engine for fuel-only stages in asparagus staging.  It has no
-# mass, no thrust, Isp doesn't matter.  Make it radial, so that the optimizer
-# can allow putting engines directly below this stage.
-noEngine = engine("none", 0, 0, 0, 0, radial=True)
-
 types = (
-    # One of the choices of engines is to have none...
-    noEngine,
-
-    # Jets.  TODO
-
-    # Bipropellant engines, in order of Isp first, and thrust:mass ratio second
-    engine("LV-N",      220, 800,    2.25,     60, vectoring=True),
+    # Bipropellent engines.
+    engine("24-77",     250, 300,    0.09,     20, vectoring=True, radial=True),
+    engine("48-7S",     300, 350,    0.1,      30, vectoring=True),
     engine("Aerospike", 388, 390,    1.5,     175),
+    engine("KR-1x2",    290, 340,   10.0,    2000, vectoring=True, large=True),
+    engine("KR-2L",     280, 380,    6.5,    2500, vectoring=True, large=True),
+    engine("KS-25x4",   320, 360,    9.75,   3200, vectoring=True, large=True),
+    engine("LV-1",      220, 290,    0.03,      4, vectoring=True),
+    engine("LV-1R",     220, 290,    0.03,      4, vectoring=True, radial=True),
     engine("LV-909",    300, 390,    0.5,      50, vectoring=True),
-    engine("Poodle",    270, 390,    2.5,     220, vectoring=True, large=True),
+    engine("LV-N",      220, 800,    2.25,     60, vectoring=True),
     engine("LV-T30",    320, 370,    1.25,    215),
     engine("LV-T45",    320, 370,    1.5,     200, vectoring=True),
-    engine("Mainsail",  280, 330,    6,      1500, vectoring=True, large=True),
-    engine("Mark 55",   290, 320,    0.9,     120, vectoring=True, radial=True),
-    engine("24-77",     250, 300,    0.09,     20, vectoring=True, radial=True),
-    engine("LV-1",      220, 290,    0.03,      1.5),
+    engine("Mainsail",  320, 360,    6,      1500, vectoring=True, large=True),
+    engine("Mark 55",   320, 360,    0.9,     120, vectoring=True, radial=True),
+    engine("Poodle",    270, 390,    2,       220, vectoring=True, large=True),
+    engine("RAPIER",    320, 360,    1.2,     175, vectoring=True),
+    engine("Skipper",   320, 370,    3,       650, vectoring=True, large=True),
 
-    # TODO: we need a *lot* of power for the ion engine, which starts to add
-    # more mass than just the 0.25.  Also, the dry mass is much more than 1/4
-    # of the propellant, and the number of containers starts to matter.  So,
-    # for now, just ignore it.
-    # engine("ion",      4200,4200,    0.25,      0.5),
-
-    # TODO: solid-fuel rockets aren't handled correctly yet with respect to fuel
-    # calculations.
-    # engine("Sepratron", 100,    0.15,     20, solid=9),
-    # engine("RT-10",     240,    0.5,     250, solid=433),
-    # engine("BACC",      250,    1.75,    300, solid=850),
+    # Solids
+    engine("Launch Escape System",
+                        320, 360,    1,       750, fuel="solid"),
+    engine("SRB-KD25k", 230, 250,    3,       650, fuel="solid"),
+    engine("BACC",      230, 250,    1.5,     315, fuel="solid"),
+    engine("RT-10",     225, 240,    0.5,     250, fuel="solid"),
+    engine("Sepratron", 100, 100,    0.0125,   18, fuel="solid"),
 )
 _engineDict = dict((e.name.lower(), e) for e in types)
 def getEngine(name):
