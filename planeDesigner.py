@@ -82,57 +82,219 @@ class part(object):
         else:
             return 0
 
-def forces(parts, flightPitch, AoA, v, altitude = 0, planet = planet.kerbin, deltaT = 0.04, throttle = 1, quiet = False):
-    """
-    Given a description of the plane, 
-    the flight path pitch (the angle of prograde with the surface),
-    the angle of attack (the angle of pitch with prograde),
-    the speed,
-    the altitude and the planet, 
-    the throttle (default max we can achieve at this altitude)
+    def fuelRequired(self, altitude, options):
+        if isinstance(self._parttype, jets.jetengine):
+            return self._n * self._parttype.fuelRequired(altitude, options = options)
+        else: return 0
 
-    Prints a report unless 'quiet' is set.
+class plane(object):
+    def __init__(self, *parts):
+        self._parts = parts
 
-    Returns a tuple:
-        (net, throttle, lift, drag, thrust, apparentGravity)
-    'net', 'lift', 'drag', and 'thrust' are vectors with X being forward and Y being up.
-    'throttle' is, from 0 to 1, how much the jet engines will be throttled up assuming proper intake layout
-    'apparentGravity' is the force of gravity minus centrifugal effects.  Normally negative.
-    """
-    pitch = flightPitch + AoA
-    jetOptions = jets.standardoptions(planet, deltaT)
+    def forces(self, flightPitch, AoA, v, altitude = 0, jetoptions = jets.kerbonormative, throttle = 1, verbose = False):
+        """
+        Given:
+        the flight path pitch (the angle of prograde with the surface),
+        the angle of attack (the angle of pitch with prograde),
+        the speed,
+        the altitude and the planet,
+        the throttle (default max we can achieve at this altitude)
 
-    drag = physics.vector(0,0)
-    lift = physics.vector(0,0)
-    down = 0
-    maxthrust = physics.vector(0,0)
-    airProvided = 0
-    airRequired = 0
-    for part in parts:
-        (d,l,g) = part.zeroThrustForces(flightPitch, AoA, v, altitude, planet)
-        drag = drag.add(d)
-        lift = lift.add(l)
-        down += g
-        maxthrust = maxthrust.add(part.thrustForceAtMaxThrottle(v, flightPitch, AoA))
-        airProvided += part.airProvided(AoA, v, altitude, jetOptions)
-        airRequired += part.airRequired(v, altitude, jetOptions)
+        Prints a report if 'verbose' is set.
 
-    # account for throttle setting due to air
-    if throttle * airRequired > airProvided:
-        throttle = airProvided / airRequired
-    thrust = maxthrust.scale(throttle)
+        Returns a tuple:
+            (net, throttle, lift, drag, thrust, apparentGravity)
+        net, lift, drag, and thrust are vectors with X being forward and Y being up.
+        throttle is, from 0 to 1, how much the jet engines will be throttled up assuming proper intake layout
+        apparentGravity is the force of gravity minus centrifugal effects.  Normally negative.
+        """
+        drag = physics.vector(0,0)
+        lift = physics.vector(0,0)
+        down = 0
+        maxthrust = physics.vector(0,0)
+        airProvided = 0
+        airRequired = 0
+        for part in self._parts:
+            (d,l,g) = part.zeroThrustForces(flightPitch, AoA, v, altitude, jetoptions.planet)
+            drag = drag.add(d)
+            lift = lift.add(l)
+            down += g
+            maxthrust = maxthrust.add(part.thrustForceAtMaxThrottle(v, flightPitch, AoA))
+            airProvided += part.airProvided(AoA, v, altitude, jetoptions)
+            airRequired += part.airRequired(v, altitude, jetoptions)
 
-    net = thrust.add(lift.add(drag.add(physics.vector(0, down))))
+        # account for throttle setting due to air
+        if throttle * airRequired > airProvided:
+            throttle = airProvided / airRequired
+        thrust = maxthrust.scale(throttle)
 
-    if not quiet:
-        print ("throttle: %.1f%%" % (throttle * 100))
-        print ("lift:    (%7.2f, %7.2f) kN" % (lift[0], lift[1]))
-        print ("drag:    (%7.2f, %7.2f) kN" % (drag[0], drag[1]))
-        print ("thrust:  (%7.2f, %7.2f) kN" % (thrust[0], thrust[1]))
-        print ("gravity: (       , %7.2f) kN" % down)
-        print ("net:     (%7.2f, %7.2f) kN" % (net[0], net[1]))
+        net = thrust.add(lift.add(drag.add(physics.vector(0, down))))
 
-    return (net, throttle, lift, drag, thrust, down)
+        if verbose:
+            print ("throttle: %.1f%%" % (throttle * 100))
+            print ("lift:    (%7.2f, %7.2f) kN" % (lift[0], lift[1]))
+            print ("drag:    (%7.2f, %7.2f) kN" % (drag[0], drag[1]))
+            print ("thrust:  (%7.2f, %7.2f) kN" % (thrust[0], thrust[1]))
+            print ("gravity: (       , %7.2f) kN" % down)
+            print ("net:     (%7.2f, %7.2f) kN" % (net[0], net[1]))
+
+        return (net, throttle, lift, drag, thrust, down)
+
+    def equilibriumHorizontalSpeed(self, AoA, altitude = 0, jetoptions = jets.kerbonormative, throttle = 1):
+        """
+        Given:
+        angle of attack
+        optional altitude
+        optional throttle
+        optional planet and physics deltaT
+
+        Find the speed at which drag and thrust balance perfectly.
+        """
+        def willSpeedUp(v):
+            # we expect zero flight path angle
+            netForce = self.forces(0, AoA, v, altitude, jetoptions, throttle)[0]
+            if netForce[0] > 0: return True
+            else: return False
+
+        # start at 100 m/s, keep doubling until we find a speed where we don't speed up.
+        vmin = 0
+        vmax = 100
+        while willSpeedUp(vmax):
+            vmin = vmax
+            vmax = vmax * 2
+
+        # Now we know the equilibrium lies between vmin and vmax; binary search.
+        while vmax - vmin > 1e-3:
+            vhalf = 0.5 * (vmax + vmin)
+            if willSpeedUp(vhalf):
+                vmin = vhalf
+            else:
+                vmax = vhalf
+
+        return vhalf
+
+    def levelThrottle(self, AoA, altitude = 0, jetoptions = jets.kerbonormative):
+        """
+        Given:
+        angle of attack
+        optional altitude
+        optional planet and physics deltaT
+
+        Find the throttle setting in [0,1] that has us be at equilibrium:
+        thrust and lift offset apparent gravity when at the equilibrium horizontal speed.
+
+        Return None if that's not possible, i.e. you need more than throttle of 1.
+
+        Assumption: engines aren't pointed down.
+        """
+        def isFalling(t):
+            v = self.equilibriumHorizontalSpeed(AoA, altitude, jetoptions, t)
+            netForce = self.forces(0, AoA, v, altitude, jetoptions, t)[0]
+            if netForce[1] < 0:
+                return True
+            else:
+                return False
+
+        if isFalling(1):
+            return None
+        if not isFalling(0):
+            return 0
+
+        minThrottle = 0
+        maxThrottle = 1
+        while maxThrottle - minThrottle > 1e-4:
+            half = 0.5 * (maxThrottle + minThrottle)
+            if isFalling(half):
+                minThrottle = half
+            else:
+                maxThrottle = half
+        return half
+
+    def fuelConsumption(self, altitude = 0, throttle = 1, jetoptions = jets.kerbonormative):
+        """
+        How much fuel does this plane consume at the given throttle setting and altitude?
+        Returns a value in kg/s.
+        """
+        fuel = 0
+        for part in self._parts:
+            fuel += part.fuelRequired(altitude, options = jetoptions)
+        return throttle * fuel
+
+    def optimizeFuelConsumptionAtAltitude(self, altitude = 0, jetoptions = jets.kerbonormative, verbose = False):
+        """
+        Given that we're flying at a certain altitude, achieve
+        level flight for the minimum fuel consumed per distance.
+        Returns a tuple:
+            (pitch [0,90] degrees, throttle [0,1], speed, fuel consumption in kg/m)
+        Returns None if you can't get level flight at that altitude no matter what.
+        """
+        bestPitch = -1
+        bestThrottle = 1
+        bestSpeed = 0
+        bestFuel = 1e308
+
+        for pitch in range(90):
+            if verbose: print "Trying pitch %d, best so far is %d" % (pitch, bestPitch)
+            throttle = self.levelThrottle(pitch, altitude = altitude, jetoptions = jetoptions)
+            if throttle is None:
+                continue
+            speed = self.equilibriumHorizontalSpeed(pitch, altitude = altitude, throttle = throttle, jetoptions = jetoptions)
+            if speed < 1e-6:
+                # no stationary hovering allowed
+                continue
+            fuelPerTime = self.fuelConsumption(altitude, throttle, jetoptions)
+            fuelPerDist = fuelPerTime / speed
+            if fuelPerDist < bestFuel:
+                bestPitch = pitch
+                bestThrottle = throttle
+                bestSpeed = speed
+                bestFuel = fuelPerDist
+
+        if bestPitch == -1:
+            return None
+        else:
+            return (bestPitch, bestThrottle, bestSpeed, bestFuel)
+
+    def optimizeFuelConsumption(self, minAltitude = 0, maxAltitude = None, altitudeStep = 500, jetoptions = jets.kerbonormative, verbose = False):
+        """
+        Optimize the fuel consumption over all altitudes.
+
+        Optionally specify the min altitude (so you don't fly through terrain),
+        the max altitude, and the step between altitudes that we consider.
+        """
+        if maxAltitude is None:
+            maxAltitude = jetoptions.planet.topOfAtmosphere()
+
+        bestAltitude = -1
+        bestResult = None
+
+        altitude = minAltitude
+        while altitude < maxAltitude:
+            if verbose: print ("Testing altitude %d, best so far is %d with %s" % (altitude, bestAltitude, bestResult))
+            result = self.optimizeFuelConsumptionAtAltitude(altitude = altitude, jetoptions = jetoptions)
+            if result is None:
+                break
+            if bestResult is None or result[3] < bestResult[3]:
+                bestAltitude = altitude
+                bestResult = result
+            altitude += altitudeStep
+
+        if bestResult is None:
+            if verbose: print ("Level flight is impossible with this plane")
+            return None
+
+        (pitch, throttle, speed, fuelKgPerM) = bestResult
+
+        if verbose:
+            fuelUnitsPerKm = fuelKgPerM * 1000 / 5
+            print ("Fly at %d m altitude, pitch %d degrees, throttle %.3f, to achieve %.2f m/s using %g U/km" %
+                    (bestAltitude, pitch, throttle, speed, fuelUnitsPerKm))
+
+        return (bestAltitude, pitch, throttle, speed, fuelKgPerM)
+
+
+###########################################################################
+### Below here it's all just tests to run each routine.
 
 def forcesTest():
     """
@@ -148,11 +310,71 @@ def forcesTest():
     net:     (  25.72,  -15.09) kN
     """
     import planeDesigner, jets, lift
-    plane = (planeDesigner.part(jets.basicjet),
-             planeDesigner.part(jets.radialIntake, 1),
+    p = plane(planeDesigner.part(jets.basicjet),
+             planeDesigner.part(jets.radialIntake, 2),
              planeDesigner.part(lift.avr8, 2),
              planeDesigner.part(lift.deltaDeluxe, 2),
              planeDesigner.part(lift.deltaDeluxe, 2, AoAdegrees = 10),
              planeDesigner.part(None, n = 2, Cd = 0.2, extraMass = 0.15 + 150 * 0.005), # two fuel tanks
             )
-    planeDesigner.forces(plane, 5, 2.5, 0.85 * 342, altitude = 10000, throttle = 0.5)
+    p.forces(5, 2.5, 0.85 * 342, altitude = 10000, throttle = 0.5)
+
+def speedTest():
+    import planeDesigner, jets, lift
+    p = plane(planeDesigner.part(jets.basicjet),
+             planeDesigner.part(jets.radialIntake, 2),
+             planeDesigner.part(lift.avr8, 2),
+             planeDesigner.part(lift.deltaDeluxe, 2),
+             planeDesigner.part(lift.deltaDeluxe, 2, AoAdegrees = 10),
+             planeDesigner.part(None, n = 2, Cd = 0.2, extraMass = 0.15 + 150 * 0.005), # two fuel tanks
+            )
+    speed = p.equilibriumHorizontalSpeed(2.5, altitude = 10000, throttle = 0.5)
+    print ("equilibrium speed: %g m/s" % speed)
+    p.forces(0, 2.5, speed, altitude = 10000, throttle = 0.5)
+
+def throttleTest():
+    import planeDesigner, jets, lift
+    p = plane(planeDesigner.part(jets.basicjet),
+             planeDesigner.part(jets.radialIntake, 2),
+             planeDesigner.part(lift.avr8, 2),
+             planeDesigner.part(lift.deltaDeluxe, 2),
+             planeDesigner.part(lift.deltaDeluxe, 2, AoAdegrees = 10),
+             planeDesigner.part(None, n = 2, Cd = 0.2, extraMass = 0.15 + 150 * 0.005), # two fuel tanks
+            )
+    throttle = p.levelThrottle(10, altitude = 10000)
+    if throttle is None:
+        print ("level flight is impossible")
+    else:
+        speed = p.equilibriumHorizontalSpeed(2.5, altitude = 10000, throttle = throttle)
+        print ("equilibrium speed: %g m/s" % speed)
+        p.forces(0, 2.5, speed, altitude = 10000, throttle = throttle)
+
+
+def optimizePitchTest():
+    import planeDesigner, jets, lift
+    p = plane(planeDesigner.part(jets.basicjet),
+             planeDesigner.part(jets.radialIntake, 2),
+             planeDesigner.part(lift.avr8, 2),
+             planeDesigner.part(lift.deltaDeluxe, 2),
+             planeDesigner.part(lift.deltaDeluxe, 2, AoAdegrees = 10),
+             planeDesigner.part(None, n = 2, Cd = 0.2, extraMass = 0.15 + 150 * 0.005), # two fuel tanks
+            )
+    opt = p.optimizeFuelConsumptionAtAltitude(altitude = 10000, verbose = True)
+    if opt is None:
+        print ("Level flight is impossible with any pitch and throttle at this altitude")
+    else:
+        (pitch, throttle, speed, fuelKgPerM) = opt
+        fuelUnitsPerKm = fuelKgPerM * 1000 / 5
+        print ("Fly at %d degrees, throttle %.3f, to achieve %.2f m/s using %g U/km" % (pitch, throttle, speed, fuelUnitsPerKm))
+
+def optimizeFullyTest():
+    import planeDesigner, jets, lift
+    # use the same plane as above but with a turbojet because that shows more interesting behaviour
+    p = plane(planeDesigner.part(jets.turbojet),
+             planeDesigner.part(jets.radialIntake, 2),
+             planeDesigner.part(lift.avr8, 2),
+             planeDesigner.part(lift.deltaDeluxe, 2),
+             planeDesigner.part(lift.deltaDeluxe, 2, AoAdegrees = 10),
+             planeDesigner.part(None, n = 2, Cd = 0.2, extraMass = 0.15 + 150 * 0.005), # two fuel tanks
+            )
+    p.optimizeFuelConsumption(verbose = True, altitudeStep = 1000)
