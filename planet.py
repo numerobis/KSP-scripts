@@ -70,6 +70,27 @@ class planet(object):
         r = self.radius + altitude
         return self.mu / (r*r)
 
+    def weight(self, mass, altitude = 0, speed = None):
+        """
+        Return the weight corresponding to a given mass.
+
+        Weight is kN if mass is t, weight is N if mass is kg.
+
+        altitude is meters above the datum.
+
+        speed is m/s orbit horizontal speed.  If speed is None (default),
+        we look up the sidereal speed at that altitude.
+
+        If speed exceeds orbital velocity, then the weight will be negative.
+        """
+        # Apparent gravity is g minus the centrifugal effect v^2/v_o^2
+        g = self.gravity(altitude)
+        vO = self.orbitalVelocity(altitude)
+        if speed is None:
+            speed = self.siderealSpeed(altitude)
+        c = speed * speed / (vO * vO)
+        return (g - c) * mass
+
     def siderealSpeed(self, altitude = 0):
         """
         If we're immobile on the ground at the given altitude, what's
